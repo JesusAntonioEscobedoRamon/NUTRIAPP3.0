@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, ScrollView, 
-  SafeAreaView, StatusBar, Modal, ActivityIndicator, Dimensions 
+  SafeAreaView, StatusBar, Modal, ActivityIndicator, Dimensions,
+  Image, Alert 
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
+import { useUser } from '../hooks/useUser';
 
 const { width } = Dimensions.get('window');
 
@@ -18,24 +22,95 @@ const COLORS = {
 };
 
 export default function ScheduleScreen({ navigation }: any) {
+  const { user: authUser } = useAuth();
+  const { user: patientData } = useUser();
+
+  const [doctors, setDoctors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedDoctor, setSelectedDoctor] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentStep, setPaymentStep] = useState<'selection' | 'checkout' | 'success'>('selection');
 
-  const doctors = [
-    { id: '1', name: 'Dr. Carlos Rodríguez', specialty: 'Nutriólogo General', icon: 'account-tie', price: 450 },
-    { id: '2', name: 'Dra. Ana García', specialty: 'Nutrióloga Deportiva', icon: 'run-fast', price: 600 },
-    { id: '3', name: 'Dr. Miguel Torres', specialty: 'Nutrición Clínica', icon: 'hospital-marker', price: 550 },
-    { id: '4', name: 'Dra. Laura Martínez', specialty: 'Nutrióloga Pediátrica', icon: 'baby-face-outline', price: 500 },
-  ];
+  useEffect(() => {
+    const fetchDoctors = async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase
+          .from('nutriologos')
+          .select('id_nutriologo, nombre, apellido, especialidad, tarifa_consulta, foto_perfil')
+          .eq('activo', true)
+          .order('nombre');
 
-  const handlePayment = () => {
+        if (error) {
+          console.error('Error al cargar nutriólogos:', error.message);
+          Alert.alert('Error', 'No se pudieron cargar los nutriólogos. Intenta más tarde.');
+          return;
+        }
+
+        const formatted = data?.map(d => {
+          // No usamos getPublicUrl porque foto_perfil YA es la URL completa pública
+          const photoUrl = d.foto_perfil && d.foto_perfil.trim() !== '' && d.foto_perfil !== 'nutriologo_default.png'
+            ? d.foto_perfil
+            : null;
+
+          // Debug para que veas exactamente qué se está usando
+          console.log(`Nutriólogo ${d.nombre} ${d.apellido}:`);
+          console.log('  - foto_perfil en BD:', d.foto_perfil);
+          console.log('  - URL usada en <Image>:', photoUrl);
+
+          return {
+            id: d.id_nutriologo.toString(),
+            name: `Dr. ${d.nombre} ${d.apellido}`,
+            specialty: d.especialidad || 'Nutrición Clínica',
+            price: d.tarifa_consulta || 800,
+            realId: d.id_nutriologo,
+            photoUrl,
+          };
+        }) || [];
+
+        setDoctors(formatted);
+      } catch (err) {
+        console.error('Excepción al cargar nutriólogos:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDoctors();
+  }, []);
+
+  const handlePayment = async () => {
+    if (!selectedDoctor || !patientData?.id_paciente) {
+      Alert.alert('Atención', 'No se pudo identificar al paciente o al nutriólogo.');
+      return;
+    }
+
     setIsProcessing(true);
-    // Simulación de procesamiento de pago segura
-    setTimeout(() => {
-      setIsProcessing(false);
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const { error } = await supabase
+        .from('citas')
+        .insert({
+          id_paciente: patientData.id_paciente,
+          id_nutriologo: selectedDoctor.realId,
+          fecha_hora: new Date().toISOString(),
+          estado: 'pendiente',
+          tipo_cita: 'presencial',
+          motivo_consulta: 'Consulta inicial',
+          duracion_minutos: 60,
+        });
+
+      if (error) throw error;
+
       setPaymentStep('success');
-    }, 2000);
+    } catch (err) {
+      console.error('Error al crear cita:', err);
+      Alert.alert('Error', 'No se pudo reservar la cita.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const closeModal = () => {
@@ -43,11 +118,39 @@ export default function ScheduleScreen({ navigation }: any) {
     setSelectedDoctor(null);
   };
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={{ marginTop: 16, color: COLORS.textDark }}>Cargando especialistas...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (doctors.length === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: COLORS.textDark, textAlign: 'center' }}>
+            No hay nutriólogos disponibles en este momento
+          </Text>
+          <TouchableOpacity 
+            style={{ marginTop: 24, backgroundColor: COLORS.primary, paddingVertical: 14, paddingHorizontal: 40, borderRadius: 12 }}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={{ color: COLORS.white, fontWeight: '700' }}>Regresar</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerIcon}>
           <Ionicons name="arrow-back-outline" size={26} color={COLORS.primary} />
@@ -76,7 +179,17 @@ export default function ScheduleScreen({ navigation }: any) {
             activeOpacity={0.7}
           >
             <View style={styles.avatarContainer}>
-              <MaterialCommunityIcons name={doctor.icon as any} size={30} color={COLORS.primary} />
+              {doctor.photoUrl ? (
+                <Image
+                  source={{ uri: doctor.photoUrl }}
+                  style={{ width: '100%', height: '100%', borderRadius: 18 }}
+                  resizeMode="cover"
+                  onError={(e) => console.log(`Error cargando imagen de ${doctor.name}:`, e.nativeEvent.error)}
+                  onLoad={() => console.log(`Imagen cargada correctamente para ${doctor.name}`)}
+                />
+              ) : (
+                <MaterialCommunityIcons name="account-tie" size={30} color={COLORS.primary} />
+              )}
             </View>
 
             <View style={styles.doctorInfo}>
@@ -93,7 +206,6 @@ export default function ScheduleScreen({ navigation }: any) {
           </TouchableOpacity>
         ))}
 
-        {/* MODAL DE PAGO INTEGRADO */}
         <Modal visible={paymentStep !== 'selection'} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.paymentCard}>
@@ -148,8 +260,8 @@ export default function ScheduleScreen({ navigation }: any) {
                   <TouchableOpacity 
                     style={styles.finalButton} 
                     onPress={() => {
-                        closeModal();
-                        navigation.navigate('Calendar', { doctorName: selectedDoctor.name });
+                      closeModal();
+                      navigation.navigate('Calendar', { doctorName: selectedDoctor.name });
                     }}
                   >
                     <Text style={styles.finalButtonText}>SELECCIONAR FECHA Y HORA</Text>

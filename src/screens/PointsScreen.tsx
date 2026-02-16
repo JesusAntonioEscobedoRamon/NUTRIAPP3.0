@@ -96,12 +96,35 @@ export default function PointsScreen({ navigation }: any) {
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        <View style={styles.progressSection}>
-          <View style={[styles.circleBase, { borderColor: state.current.achieved ? COLORS.primary : COLORS.border }]}>
-            <View style={styles.circleInner}>
-              <Text style={styles.circlePercent}>{state.percentage}%</Text>
-              <Text style={styles.circleSub}>DEL NIVEL</Text>
-            </View>
+        {/* BARRA DE PROGRESO DE TROFEOS */}
+        <View style={styles.trophyProgressSection}>
+          <Text style={styles.trophyProgressTitle}>TU PROGRESIÓN</Text>
+          <View style={styles.trophyProgressContainer}>
+            {state.list.map((trophy, idx) => (
+              <View key={trophy.id} style={styles.trophyProgressItem}>
+                <TouchableOpacity
+                  onPress={() => setCurrentIdx(idx)}
+                  style={[
+                    styles.trophyProgressIcon,
+                    {
+                      backgroundColor: trophy.achieved ? trophy.color : COLORS.border,
+                      borderColor: currentIdx === idx ? trophy.color : COLORS.border,
+                      borderWidth: currentIdx === idx ? 3 : 1
+                    }
+                  ]}
+                >
+                  {trophy.achieved && (
+                    <Image source={trophy.image} style={styles.miniTrophyImg} />
+                  )}
+                  {!trophy.achieved && (
+                    <Ionicons name="lock-closed" size={20} color={COLORS.textLight} />
+                  )}
+                </TouchableOpacity>
+                <Text style={[styles.trophyProgressLabel, { opacity: trophy.achieved ? 1 : 0.5 }]}>
+                  {trophy.pointsRequired}
+                </Text>
+              </View>
+            ))}
           </View>
         </View>
 
@@ -148,9 +171,29 @@ export default function PointsScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
+        {/* INFORMACIÓN DE PROGRESO */}
+        <View style={styles.infoSection}>
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>PUNTOS ACTUALES</Text>
+              <Text style={styles.infoValue}>{userPoints}</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>PRÓXIMO OBJETIVO</Text>
+              <Text style={styles.infoValue}>{state.current.pointsRequired}</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>AVANCE</Text>
+              <Text style={[styles.infoValue, { color: state.current.color }]}>{state.percentage}%</Text>
+            </View>
+          </View>
+        </View>
+
         <TouchableOpacity style={styles.rewardsButton} onPress={() => setShowModal(true)}>
-          <MaterialCommunityIcons name="wallet-giftcard" size={22} color={COLORS.white} />
-          <Text style={styles.rewardsButtonText}>ESTADO DE RANGO</Text>
+          <Ionicons name="medal" size={22} color={COLORS.white} />
+          <Text style={styles.rewardsButtonText}>VER TODOS MIS LOGROS</Text>
         </TouchableOpacity>
 
       </ScrollView>
@@ -162,19 +205,44 @@ export default function PointsScreen({ navigation }: any) {
               <Ionicons name="close" size={28} color={COLORS.textDark} />
             </TouchableOpacity>
             
-            <View style={styles.modalIconCircle}>
-              <Image source={state.best.image} style={styles.modalTrophyImg} />
-            </View>
+            {/* Título */}
+            <Text style={styles.modalMainTitle}>MIS LOGROS</Text>
             
-            <Text style={styles.modalTitle}>Rango Actual Alcanzado</Text>
-            <Text style={[styles.modalLevelName, { color: COLORS.primary }]}>{state.best.level}</Text>
-            
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>Puntos en tu cuenta:</Text>
-              <Text style={styles.statValue}>{userPoints} Puntos Nutri U</Text>
+            {/* Mejor logro */}
+            <View style={[styles.bestAchievementCard, { borderColor: state.best.color }]}>
+              <View style={[styles.bestAchievementIcon, { backgroundColor: state.best.color }]}>
+                <Image source={state.best.image} style={styles.bestTrophyImg} />
+              </View>
+              <Text style={[styles.bestAchievementName, { color: state.best.color }]}>{state.best.name}</Text>
+              <Text style={styles.bestAchievementLevel}>{state.best.level}</Text>
+              <View style={styles.bestAchievementBadge}>
+                <Ionicons name="checkmark-circle" size={24} color={state.best.color} />
+                <Text style={[styles.bestAchievementStatus, { color: state.best.color }]}>DESBLOQUEADO</Text>
+              </View>
             </View>
 
-            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowModal(false)}>
+            {/* Todos los logros */}
+            <View style={styles.allAchievementsSection}>
+              <Text style={styles.allAchievementsTitle}>TODOS TUS LOGROS</Text>
+              {state.list.map((trophy, idx) => (
+                <View key={trophy.id} style={[styles.achievementRow, { opacity: trophy.achieved ? 1 : 0.5 }]}>
+                  <View style={[styles.achievementRowIcon, { backgroundColor: trophy.color }]}>
+                    <Image source={trophy.image} style={styles.achievementRowImg} />
+                  </View>
+                  <View style={styles.achievementRowInfo}>
+                    <Text style={styles.achievementRowName}>{trophy.name}</Text>
+                    <Text style={styles.achievementRowLevel}>{trophy.level} • {trophy.pointsRequired} pts</Text>
+                  </View>
+                  {trophy.achieved && (
+                    <View style={styles.achievementRowCheck}>
+                      <Ionicons name="checkmark" size={22} color={COLORS.primary} />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity style={[styles.modalCloseButton, { backgroundColor: state.best.color }]} onPress={() => setShowModal(false)}>
               <Text style={styles.modalCloseButtonText}>CONTINUAR</Text>
             </TouchableOpacity>
           </View>
@@ -194,11 +262,23 @@ const styles = StyleSheet.create({
   pointsBadgeHeader: { backgroundColor: COLORS.secondary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border },
   pointsBadgeText: { fontSize: 11, fontWeight: '900', color: COLORS.primary },
   scrollContent: { padding: 20, alignItems: 'center' },
-  progressSection: { marginVertical: 20 },
-  circleBase: { width: CIRCLE_SIZE, height: CIRCLE_SIZE, borderRadius: CIRCLE_SIZE/2, borderWidth: 8, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.white, elevation: 5 },
-  circleInner: { alignItems: 'center' },
-  circlePercent: { fontSize: 50, fontWeight: '900', color: COLORS.textDark },
-  circleSub: { fontSize: 10, fontWeight: '900', color: COLORS.primary, letterSpacing: 2 },
+  
+  // TROPHY PROGRESS BAR
+  trophyProgressSection: { width: '100%', marginBottom: 30 },
+  trophyProgressTitle: { fontSize: 13, fontWeight: '900', color: COLORS.textLight, letterSpacing: 1.5, marginBottom: 15, textAlign: 'center' },
+  trophyProgressContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  trophyProgressItem: { alignItems: 'center', flex: 1 },
+  trophyProgressIcon: { width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', marginBottom: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 3 },
+  miniTrophyImg: { width: 40, height: 40, resizeMode: 'contain' },
+  trophyProgressLabel: { fontSize: 10, fontWeight: '800', color: COLORS.primary },
+  
+  // INFO SECTION
+  infoSection: { width: '100%', marginVertical: 20 },
+  infoCard: { backgroundColor: COLORS.white, borderRadius: 16, padding: 16, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+  infoLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textLight, letterSpacing: 0.5 },
+  infoValue: { fontSize: 16, fontWeight: '900', color: COLORS.primary },
+  infoDivider: { height: 1, backgroundColor: COLORS.border },
   carouselContainer: { flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-between', marginVertical: 20 },
   trophyCard: { width: width * 0.7, backgroundColor: COLORS.white, borderRadius: 25, padding: 25, alignItems: 'center', borderWidth: 2, borderColor: COLORS.border, elevation: 3 },
   imageBox: { width: 140, height: 140, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
@@ -213,18 +293,35 @@ const styles = StyleSheet.create({
   progressBarBg: { height: 8, backgroundColor: COLORS.secondary, borderRadius: 4, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border },
   progressBarFill: { height: '100%', borderRadius: 4 },
   progressLabel: { fontSize: 11, color: COLORS.textLight, textAlign: 'center', marginTop: 8, fontWeight: '800' },
-  rewardsButton: { flexDirection: 'row', backgroundColor: COLORS.primary, paddingHorizontal: 30, paddingVertical: 18, borderRadius: 18, marginTop: 20, alignItems: 'center', width: '100%', justifyContent: 'center' },
-  rewardsButtonText: { color: COLORS.white, fontWeight: '900', marginLeft: 10, fontSize: 14 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(26, 48, 38, 0.85)', justifyContent: 'center', padding: 25 },
-  modalContent: { backgroundColor: COLORS.white, borderRadius: 30, padding: 30, alignItems: 'center', borderWidth: 3, borderColor: COLORS.primary },
-  closeBtn: { position: 'absolute', right: 20, top: 20 },
-  modalIconCircle: { width: 120, height: 120, borderRadius: 60, backgroundColor: COLORS.secondary, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
-  modalTrophyImg: { width: 80, height: 80, resizeMode: 'contain' },
-  modalTitle: { fontSize: 14, fontWeight: '800', color: COLORS.textLight, textTransform: 'uppercase' },
-  modalLevelName: { fontSize: 26, fontWeight: '900', marginTop: 5 },
-  statBox: { marginTop: 25, padding: 20, backgroundColor: COLORS.secondary, borderRadius: 20, width: '100%', alignItems: 'center', borderStyle: 'dashed', borderWidth: 2, borderColor: COLORS.primary },
-  statLabel: { fontSize: 12, fontWeight: '700', color: COLORS.textLight },
-  statValue: { fontSize: 18, fontWeight: '900', color: COLORS.primary, marginTop: 5 },
-  modalCloseButton: { backgroundColor: COLORS.primary, width: '100%', padding: 18, borderRadius: 15, marginTop: 25, alignItems: 'center' },
-  modalCloseButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14 }
+  rewardsButton: { flexDirection: 'row', backgroundColor: COLORS.primary, paddingHorizontal: 30, paddingVertical: 18, borderRadius: 18, marginTop: 20, alignItems: 'center', width: '100%', justifyContent: 'center', marginBottom: 30, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  rewardsButtonText: { color: COLORS.white, fontWeight: '900', marginLeft: 12, fontSize: 14, letterSpacing: 0.5 },
+  
+  // MODAL
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(26, 48, 38, 0.9)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: COLORS.white, borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 20, paddingTop: 30, paddingBottom: 40, maxHeight: '90%' },
+  closeBtn: { position: 'absolute', right: 20, top: 20, zIndex: 10 },
+  modalMainTitle: { fontSize: 18, fontWeight: '900', color: COLORS.textDark, textAlign: 'center', marginBottom: 25, letterSpacing: 1 },
+  
+  // BEST ACHIEVEMENT
+  bestAchievementCard: { backgroundColor: COLORS.secondary, borderRadius: 20, padding: 20, alignItems: 'center', marginBottom: 25, borderLeftWidth: 5 },
+  bestAchievementIcon: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', marginBottom: 15, elevation: 2 },
+  bestTrophyImg: { width: 70, height: 70, resizeMode: 'contain' },
+  bestAchievementName: { fontSize: 16, fontWeight: '900', textAlign: 'center' },
+  bestAchievementLevel: { fontSize: 12, color: COLORS.textLight, fontWeight: '700', marginTop: 4 },
+  bestAchievementBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: COLORS.white, borderRadius: 12 },
+  bestAchievementStatus: { fontWeight: '900', fontSize: 11, marginLeft: 6, letterSpacing: 0.5 },
+  
+  // ALL ACHIEVEMENTS
+  allAchievementsSection: { marginBottom: 20 },
+  allAchievementsTitle: { fontSize: 12, fontWeight: '900', color: COLORS.textLight, letterSpacing: 1, marginBottom: 12 },
+  achievementRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  achievementRowIcon: { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginRight: 12, elevation: 1 },
+  achievementRowImg: { width: 35, height: 35, resizeMode: 'contain' },
+  achievementRowInfo: { flex: 1 },
+  achievementRowName: { fontSize: 12, fontWeight: '900', color: COLORS.textDark },
+  achievementRowLevel: { fontSize: 10, color: COLORS.textLight, fontWeight: '700', marginTop: 3 },
+  achievementRowCheck: { paddingRight: 5 },
+  
+  modalCloseButton: { width: '100%', padding: 16, borderRadius: 18, alignItems: 'center', elevation: 2, marginTop: 10 },
+  modalCloseButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14, letterSpacing: 0.5 }
 });

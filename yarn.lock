@@ -1829,6 +1829,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@react-native-picker/picker@npm:2.11.1":
+  version: 2.11.1
+  resolution: "@react-native-picker/picker@npm:2.11.1"
+  peerDependencies:
+    react: "*"
+    react-native: "*"
+  checksum: b662be771b89ed34704a5753f54fc11a2e65e11de14624756898c344291ecc43d1b1a2dae05190ad997eb461bb66a55e71239dc60608c5f88a246804536778b9
+  languageName: node
+  linkType: hard
+
 "@react-native/assets-registry@npm:0.81.4":
   version: 0.81.4
   resolution: "@react-native/assets-registry@npm:0.81.4"
@@ -3470,6 +3480,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-file-system@npm:~19.0.21":
+  version: 19.0.21
+  resolution: "expo-file-system@npm:19.0.21"
+  peerDependencies:
+    expo: "*"
+    react-native: "*"
+  checksum: 26b4c95c8d30580723995bf8e32287b72eadf0e3442ca14854c15dc47021c4c22eefbc490ab4fadf98b3f0b14847eba3012dfe663c8a8b42de7b1587f6811d8f
+  languageName: node
+  linkType: hard
+
 "expo-font@npm:~14.0.9":
   version: 14.0.9
   resolution: "expo-font@npm:14.0.9"
@@ -3492,7 +3512,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-image-picker@npm:~17.0.8":
+"expo-image-picker@npm:~17.0.10":
   version: 17.0.10
   resolution: "expo-image-picker@npm:17.0.10"
   dependencies:
@@ -5217,6 +5237,7 @@ __metadata:
     "@react-native-async-storage/async-storage": ^2.2.0
     "@react-native-community/datetimepicker": 8.4.4
     "@react-native-community/masked-view": ^0.1.11
+    "@react-native-picker/picker": 2.11.1
     "@react-navigation/native": 6.1.0
     "@react-navigation/stack": 6.3.0
     "@supabase/supabase-js": ^2.91.0
@@ -5224,7 +5245,8 @@ __metadata:
     "@types/react-native": ^0.73.0
     expo: ~54.0.14
     expo-av: ~16.0.7
-    expo-image-picker: ~17.0.8
+    expo-file-system: ~19.0.21
+    expo-image-picker: ~17.0.10
     expo-linear-gradient: ~15.0.8
     expo-secure-store: ^15.0.8
     expo-status-bar: ~3.0.8

@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, ScrollView, TouchableOpacity, 
   SafeAreaView, StatusBar, TextInput, Alert, KeyboardAvoidingView, Platform 
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import { useUser } from '../hooks/useUser';
+import { routineService } from '../services/routineService';
 
 const COLORS = {
   primary: '#2E8B57',
@@ -17,40 +19,117 @@ const COLORS = {
 };
 
 export default function MyRoutinesScreen({ navigation }: any) {
-  // RF-3: Estado para gestionar el registro de ejercicios
-  const [exercises, setExercises] = useState([
-    { id: '1', name: 'Sentadillas', sets: '3', reps: '15', duration: '5 min' },
-  ]);
+  const { user, updatePoints } = useUser();
+  const [exercises, setExercises] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [userLoaded, setUserLoaded] = useState(false); // Nuevo: para esperar carga de user
 
-  // Estados para el formulario de registro
+  // Estados del formulario
   const [newName, setNewName] = useState('');
   const [newSets, setNewSets] = useState('');
   const [newReps, setNewReps] = useState('');
   const [newDuration, setNewDuration] = useState('');
 
-  // Función para registrar rutina/ejercicio (RF-3)
-  const handleAddExercise = () => {
-    if (!newName || !newSets || !newReps) {
-      Alert.alert('Atención', 'Por favor completa el nombre, series y repeticiones.');
+  useEffect(() => {
+    if (user) {
+      console.log('MyRoutinesScreen - Usuario cargado:', user);
+      setUserLoaded(true);
+      fetchExercises();
+    } else {
+      console.log('MyRoutinesScreen - Esperando carga de usuario...');
+      setLoading(true);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (userLoaded && !user?.id_paciente) {
+      // Solo alerta si user ya cargó y aún no hay id_paciente (raro)
+      Alert.alert('Error', 'No se encontró ID de paciente. Intenta cerrar y abrir sesión.');
+      setLoading(false);
+    }
+  }, [userLoaded]);
+
+  const fetchExercises = async () => {
+    setLoading(true);
+    const { data, error } = await routineService.getPatientRoutineExercises(user?.id_paciente);
+    if (error) {
+      console.error('Error al cargar ejercicios:', error);
+      Alert.alert('Error', 'No se pudieron cargar los ejercicios: ' + (error?.message || 'Desconocido'));
+    } else {
+      setExercises(data || []);
+    }
+    setLoading(false);
+  };
+
+  const handleAddExercise = async () => {
+    if (!newName.trim() || !newSets.trim() || !newReps.trim()) {
+      Alert.alert('Atención', 'Completa nombre, series y repeticiones.');
       return;
     }
 
-    const newItem = {
-      id: Date.now().toString(),
-      name: newName,
-      sets: newSets,
-      reps: newReps,
-      duration: newDuration || 'N/A',
+    if (!user?.id_paciente) {
+      console.error('No hay id_paciente disponible:', user);
+      Alert.alert('Error crítico', 'No se encontró el ID del paciente.');
+      return;
+    }
+
+    console.log('handleAddExercise - Intentando agregar para id_paciente:', user.id_paciente);
+
+    const exerciseData = {
+      name: newName.trim(),
+      sets: newSets.trim(),
+      reps: newReps.trim(),
+      duration: newDuration.trim() || 'N/A',
     };
 
-    setExercises([...exercises, newItem]);
+    const { data, error } = await routineService.addExercise(user.id_paciente, exerciseData);
+
+    if (error) {
+      console.error('ERROR COMPLETO al agregar ejercicio:', error);
+      const errorMsg = error?.message 
+        || error?.details 
+        || error?.hint 
+        || (typeof error === 'object' ? JSON.stringify(error, null, 2) : String(error));
+
+      Alert.alert(
+        'Error al registrar ejercicio',
+        errorMsg || 'Error desconocido. Revisa la consola.'
+      );
+    } else {
+      console.log('Éxito al agregar ejercicio:', data);
+      await updatePoints(5);
+      Alert.alert('Éxito', 'Ejercicio registrado y 5 puntos agregados!');
+      fetchExercises();
+    }
+
     // Limpiar formulario
-    setNewName(''); setNewSets(''); setNewReps(''); setNewDuration('');
+    setNewName('');
+    setNewSets('');
+    setNewReps('');
+    setNewDuration('');
   };
 
-  const deleteExercise = (id: string) => {
-    setExercises(exercises.filter(ex => ex.id !== id));
+  const deleteExercise = async (id: number) => {
+    console.log('deleteExercise - Eliminando id_ejercicio:', id);
+    const { error } = await routineService.deleteExercise(id);
+
+    if (error) {
+      console.error('ERROR COMPLETO al eliminar:', error);
+      const errorMsg = error?.message || JSON.stringify(error, null, 2);
+      Alert.alert('Error al eliminar', errorMsg || 'Error desconocido');
+    } else {
+      Alert.alert('Éxito', 'Ejercicio eliminado');
+      fetchExercises();
+    }
   };
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <Text>Cargando rutinas...</Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -79,7 +158,7 @@ export default function MyRoutinesScreen({ navigation }: any) {
             <Text style={styles.subtitle}>Crea y organiza tus ejercicios diarios</Text>
           </View>
 
-          {/* FORMULARIO DE REGISTRO (Implementación RF-3) */}
+          {/* FORMULARIO */}
           <View style={styles.registrationCard}>
             <Text style={styles.cardHeaderTitle}>Nuevo Ejercicio</Text>
             
@@ -120,23 +199,23 @@ export default function MyRoutinesScreen({ navigation }: any) {
             </TouchableOpacity>
           </View>
 
-          {/* LISTA DE EJERCICIOS REGISTRADOS */}
+          {/* LISTA */}
           <Text style={styles.sectionHeader}>MI RUTINA ACTUAL</Text>
           
           {exercises.length === 0 ? (
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyText}>No hay ejercicios registrados hoy.</Text>
+              <Text style={styles.emptyText}>No hay ejercicios registrados en tu rutina.</Text>
             </View>
           ) : (
-            exercises.map((item) => (
-              <View key={item.id} style={styles.exerciseCard}>
+            exercises.map((item: any) => (
+              <View key={item.id_ejercicio} style={styles.exerciseCard}>
                 <View style={styles.exerciseInfo}>
-                  <Text style={styles.exerciseName}>{item.name}</Text>
+                  <Text style={styles.exerciseName}>{item.nombre_ejercicio}</Text>
                   <Text style={styles.exerciseDetails}>
-                    {item.sets} Series × {item.reps} Reps • {item.duration}
+                    {item.series} Series × {item.repeticiones} Reps • {item.descripcion || 'N/A'}
                   </Text>
                 </View>
-                <TouchableOpacity onPress={() => deleteExercise(item.id)}>
+                <TouchableOpacity onPress={() => deleteExercise(item.id_ejercicio)}>
                   <Ionicons name="trash-outline" size={22} color={COLORS.danger} />
                 </TouchableOpacity>
               </View>

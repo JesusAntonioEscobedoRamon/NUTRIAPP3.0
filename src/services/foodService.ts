@@ -11,11 +11,15 @@ export const foodService = {
     const { data, error } = await supabase
       .from('registro_alimentos')
       .insert({
-        id_usuario: userId,
+        id_paciente: userId,          // ← Corregido: id_paciente (no id_usuario)
         ...foodData,
       })
       .select()
       .single();
+
+    if (error) {
+      console.error('Error al registrar alimento:', error);
+    }
 
     return { data, error };
   },
@@ -28,7 +32,7 @@ export const foodService = {
         *,
         alimentos (*)
       `)
-      .eq('id_usuario', userId)
+      .eq('id_paciente', userId)      // ← Corregido: id_paciente (no id_usuario)
       .order('fecha', { ascending: false });
 
     if (startDate && endDate) {
@@ -36,6 +40,11 @@ export const foodService = {
     }
 
     const { data, error } = await query;
+
+    if (error) {
+      console.error('Error al obtener historial:', error);
+    }
+
     return { data, error };
   },
 
@@ -45,6 +54,10 @@ export const foodService = {
       .from('alimentos')
       .select('*')
       .order('nombre');
+
+    if (error) {
+      console.error('Error al obtener alimentos:', error);
+    }
 
     return { data, error };
   },

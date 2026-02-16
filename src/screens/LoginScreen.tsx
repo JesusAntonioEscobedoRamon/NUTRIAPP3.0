@@ -28,7 +28,6 @@ export default function LoginScreen({ navigation }: any) {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [modalVisible, setModalVisible] = useState({ show: false, title: '', message: '' });
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedGender, setSelectedGender] = useState<string>('');
 
   // Estado del Formulario
@@ -156,15 +155,28 @@ export default function LoginScreen({ navigation }: any) {
       return;
     }
 
-    // Validar peso y altura si se proporcionaron
-    if (peso && (parseFloat(peso) <= 0 || parseFloat(peso) > 300)) {
-      showAlert('Atención', 'Por favor ingresa un peso válido (0-300 kg).');
-      return;
+    // Validar altura - SIN PUNTO DECIMAL
+    if (altura) {
+      const alturaStr = altura.toString();
+      if (alturaStr.includes('.')) {
+        showAlert('Atención', 'La altura debe ser ingresada sin punto decimal. Ejemplo: 170 en lugar de 1.70');
+        return;
+      }
+      
+      const alturaNum = parseFloat(altura);
+      if (alturaNum <= 0 || alturaNum > 250) {
+        showAlert('Atención', 'Por favor ingresa una altura válida (0-250 cm).');
+        return;
+      }
     }
 
-    if (altura && (parseFloat(altura) <= 0 || parseFloat(altura) > 250)) {
-      showAlert('Atención', 'Por favor ingresa una altura válida (0-250 cm).');
-      return;
+    // Validar peso
+    if (peso) {
+      const pesoNum = parseFloat(peso);
+      if (pesoNum <= 0 || pesoNum > 300) {
+        showAlert('Atención', 'Por favor ingresa un peso válido (0-300 kg).');
+        return;
+      }
     }
 
     // Preparar datos
@@ -190,7 +202,7 @@ export default function LoginScreen({ navigation }: any) {
 
     if (result.success) {
       showAlert('Registro exitoso', 
-        'Tu cuenta ha sido creada. Revisa tu bandeja de correo electronico para poder iniciar sesión.');
+        result.message || '¡Cuenta creada exitosamente! Por favor verifica tu correo electrónico para activar tu cuenta. Revisa tu bandeja de entrada y spam.');
       
       // Limpiar formulario
       setForm({
@@ -359,13 +371,23 @@ export default function LoginScreen({ navigation }: any) {
                   />
                   <CustomInput 
                     icon="resize-outline" 
-                    placeholder="Altura (cm)" 
+                    placeholder="Altura (cm) - Sin punto" 
                     keyboardType="numeric"
                     value={form.altura}
                     onChangeText={(t: string) => updateForm('altura', t)}
                     style={{ flex: 1 }}
                   />
                 </View>
+                
+                {/* Mensaje de advertencia para altura */}
+                {form.altura && form.altura.includes('.') && (
+                  <View style={styles.warningContainer}>
+                    <Ionicons name="warning-outline" size={16} color={COLORS.error} />
+                    <Text style={styles.warningText}>
+                      Ingresa la altura sin punto decimal (ej: 170 en lugar de 1.70)
+                    </Text>
+                  </View>
+                )}
                 
                 <CustomInput 
                   icon="flag-outline" 
@@ -479,11 +501,12 @@ export default function LoginScreen({ navigation }: any) {
   );
 }
 
-const CustomInput = ({ icon, style, ...props }: any) => (
+const CustomInput = ({ icon, style, placeholder, ...props }: any) => (
   <View style={[styles.inputWrapper, style]}>
     <Ionicons name={icon} size={20} color={COLORS.primary} style={styles.inputIcon} />
     <TextInput 
       style={[styles.input]} 
+      placeholder={placeholder}
       placeholderTextColor="#999" 
       {...props} 
     />
@@ -600,6 +623,24 @@ const styles = StyleSheet.create({
   genderButtonTextActive: {
     color: COLORS.white,
     fontWeight: '700',
+  },
+  
+  // Advertencia altura
+  warningContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3CD',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#FFEEBA',
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#856404',
+    marginLeft: 8,
+    flex: 1,
   },
   
   forgotBtn: { 

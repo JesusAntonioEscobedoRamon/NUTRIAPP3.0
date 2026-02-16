@@ -9,7 +9,8 @@ import {
   RefreshControl,
   Dimensions,
   StatusBar,
-  Easing
+  Easing,
+  Image 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import HamburgerMenu from '../components/HamburgerMenu';
@@ -25,9 +26,10 @@ const COLORS = {
   textDark: '#1A3026',
   textLight: '#4A4A4A',
   white: '#FFFFFF',
-  border: '#D1E8D5', // Un tono de borde un poco más oscuro para visibilidad
+  border: '#D1E8D5',
 };
 
+// Componentes de animación (se mantienen igual)
 const FloatingIcons = () => {
   const icons = ['leaf-outline', 'nutrition-outline', 'fitness-outline', 'heart-outline'];
   return (
@@ -42,7 +44,6 @@ const FloatingIcons = () => {
 const SingleFloatingIcon = ({ name, delay }: any) => {
   const moveAnim = useRef(new Animated.Value(0)).current;
   const randomLeft = useRef(Math.random() * width).current;
-
   useEffect(() => {
     Animated.loop(
       Animated.timing(moveAnim, {
@@ -54,12 +55,10 @@ const SingleFloatingIcon = ({ name, delay }: any) => {
       })
     ).start();
   }, []);
-
   const translateY = moveAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [height, -100]
   });
-
   return (
     <Animated.View style={{ position: 'absolute', left: randomLeft, transform: [{ translateY }], opacity: 0.05 }}>
       <Ionicons name={name} size={40} color={COLORS.primary} />
@@ -69,6 +68,7 @@ const SingleFloatingIcon = ({ name, delay }: any) => {
 
 export default function DashboardScreen({ navigation }: any) {
   const { userPoints, todayPoints } = usePoints();
+  const { profileImage } = useProfileImage(); // Consumimos el contexto
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -84,6 +84,16 @@ export default function DashboardScreen({ navigation }: any) {
   const onRefresh = () => {
     setRefreshing(true);
     setTimeout(() => setRefreshing(false), 1000);
+  };
+
+  // --- LÓGICA DE IMAGEN CORREGIDA ---
+  const getImageSource = () => {
+    // Si la imagen en el contexto es la de defecto "usu.webp"
+    if (profileImage === 'usu.webp') {
+      return require('../../assets/usu.webp'); // Ruta relativa desde src/screens a assets/
+    }
+    // Si es una URL de internet o una ruta de archivo local (URI)
+    return { uri: profileImage };
   };
 
   return (
@@ -102,7 +112,10 @@ export default function DashboardScreen({ navigation }: any) {
         </View>
 
         <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={styles.profileBtn}>
-          <Ionicons name="person-circle-outline" size={32} color={COLORS.primary} />
+          <Image 
+            source={getImageSource()} 
+            style={styles.headerAvatar} 
+          />
         </TouchableOpacity>
       </View>
 
@@ -115,7 +128,6 @@ export default function DashboardScreen({ navigation }: any) {
           <Text style={styles.subtitleText}>Estado actual de tu perfil</Text>
         </View>
 
-        {/* TARJETA DE PUNTOS CLICKEABLE */}
         <TouchableOpacity 
           style={styles.pointsCard} 
           onPress={() => navigation.navigate('Points')}
@@ -152,33 +164,10 @@ export default function DashboardScreen({ navigation }: any) {
         <Text style={styles.sectionTitle}>Servicios Disponibles</Text>
         
         <View style={styles.grid}>
-          <ActionCard 
-            title="NUTRICIÓN" 
-            desc="Registro diario" 
-            icon="nutrition-outline" 
-            onPress={() => navigation.navigate('FoodTracking')} 
-          />
-          <ActionCard 
-            title="GIMNASIO" 
-            desc="Mis rutinas" 
-            icon="barbell-outline" 
-            onPress={() => navigation.navigate('MyRoutines')} 
-          />
-          <ActionCard 
-            title="CITAS" 
-            desc="Nutricionista" 
-            icon="calendar-outline" 
-            onPress={() => navigation.navigate('Schedule')} 
-          />
-          <ActionCard 
-            title="DIETAS" 
-            desc="Plan semanal" 
-            icon="leaf-outline" 
-            onPress={() => navigation.navigate('MyDiet')} 
-          />
+          <ActionCard title="NUTRICIÓN" desc="Registro diario" icon="nutrition-outline" onPress={() => navigation.navigate('FoodTracking')} />
+          <ActionCard title="GIMNASIO" desc="Mis rutinas" icon="barbell-outline" onPress={() => navigation.navigate('MyRoutines')} />
+          <ActionCard title="CITAS" desc="Nutricionista" icon="calendar-outline" onPress={() => navigation.navigate('Schedule')} />
         </View>
-
-        
       </ScrollView>
 
       <HamburgerMenu isVisible={menuVisible} onClose={() => setMenuVisible(false)} navigation={navigation} />
@@ -189,10 +178,12 @@ export default function DashboardScreen({ navigation }: any) {
 const ActionCard = ({ title, desc, icon, onPress }: any) => (
   <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
     <View style={styles.cardIconCircle}>
-      <Ionicons name={icon} size={24} color={COLORS.primary} />
+      <Ionicons name={icon} size={28} color={COLORS.primary} />
     </View>
-    <Text style={styles.cardTitle}>{title}</Text>
-    <Text style={styles.cardDesc}>{desc}</Text>
+    <View style={styles.cardTextContainer}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <Text style={styles.cardDesc}>{desc}</Text>
+    </View>
   </TouchableOpacity>
 );
 
@@ -213,73 +204,58 @@ const styles = StyleSheet.create({
   brandContainer: { alignItems: 'center' },
   brandName: { fontSize: 20, fontWeight: '900', color: COLORS.primary, letterSpacing: 1.5 },
   underlineSmall: { width: 25, height: 3, backgroundColor: COLORS.accent, borderRadius: 2, marginTop: 2 },
-  profileBtn: { padding: 5 },
-  
+  profileBtn: { padding: 2 },
+  headerAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    backgroundColor: '#EEE'
+  },
   scrollContent: { padding: 25 },
   welcomeContainer: { marginBottom: 25 },
   welcomeText: { fontSize: 24, fontWeight: '800', color: COLORS.textDark },
   subtitleText: { fontSize: 14, color: COLORS.textLight, fontWeight: '300' },
-
   pointsCard: {
     backgroundColor: COLORS.white,
     borderRadius: 20,
     padding: 20,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
     elevation: 5,
     marginBottom: 30,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   pointsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  pointsLabel: { fontSize: 11, fontWeight: '700', color: COLORS.textLight, letterSpacing: 1 },
+  pointsLabel: { fontSize: 11, fontWeight: '700', color: COLORS.textLight },
   pointsValue: { fontSize: 36, fontWeight: '900', color: COLORS.textDark, marginTop: 5 },
   rankBadge: { borderWidth: 1.5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   rankBadgeText: { fontSize: 10, fontWeight: '900' },
-  
   progressSection: { marginTop: 20 },
   progressBarBg: { height: 8, backgroundColor: COLORS.secondary, borderRadius: 4, overflow: 'hidden' },
   progressBarFill: { height: '100%', backgroundColor: COLORS.primary, borderRadius: 4 },
   progressInfo: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
   progressText: { fontSize: 11, color: COLORS.primary, fontWeight: '700' },
-  
   todayGain: { flexDirection: 'row', alignItems: 'center', marginTop: 15, borderTopWidth: 1, borderTopColor: COLORS.secondary, paddingTop: 10 },
   todayText: { fontSize: 12, color: COLORS.primary, fontWeight: 'bold', marginLeft: 6 },
-
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.textDark, marginBottom: 15, letterSpacing: 0.5 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textDark, marginBottom: 20, marginTop: 10 },
+  grid: { flexDirection: 'column', gap: 12 },
   card: {
     backgroundColor: COLORS.white,
-    width: '48%',
-    padding: 20,
-    borderRadius: 18,
-    marginBottom: 15,
+    flexDirection: 'row',
+    padding: 18,
+    borderRadius: 16,
     alignItems: 'center',
-    // Borde más visible solicitado
     borderWidth: 2, 
     borderColor: COLORS.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
+    elevation: 3,
   },
   cardIconCircle: { 
-    width: 45, 
-    height: 45, 
-    borderRadius: 12, 
+    width: 50, height: 50, borderRadius: 12, 
     backgroundColor: COLORS.secondary, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(46, 139, 87, 0.1)'
+    justifyContent: 'center', alignItems: 'center', marginRight: 14, flexShrink: 0
   },
-  cardTitle: { fontSize: 13, fontWeight: '900', color: COLORS.textDark, letterSpacing: 0.5 },
-  cardDesc: { fontSize: 11, color: COLORS.textLight, marginTop: 2, textAlign: 'center' },
-  
-  footer: { marginTop: 30, alignItems: 'center', opacity: 0.4 },
-  footerText: { fontSize: 10, color: COLORS.textDark, fontWeight: '600' }
+  cardTextContainer: { flex: 1 },
+  cardTitle: { fontSize: 13, fontWeight: '900', color: COLORS.textDark },
+  cardDesc: { fontSize: 11, color: COLORS.textLight, marginTop: 2 },
 });
