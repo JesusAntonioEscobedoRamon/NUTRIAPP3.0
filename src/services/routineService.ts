@@ -1,6 +1,9 @@
 import { supabase } from "../lib/supabase";
 
 export const routineService = {
+  /**
+   * Obtiene los ejercicios de la rutina activa del paciente
+   */
   getPatientRoutineExercises: async (id_paciente?: number) => {
     if (!id_paciente) {
       console.error(
@@ -56,6 +59,11 @@ export const routineService = {
     return { data: data || [], error: error?.message };
   },
 
+  /**
+   * Agrega un nuevo ejercicio a la rutina activa del paciente
+   * @param id_paciente ID del paciente
+   * @param exerciseData Datos del ejercicio (name, sets, reps, duration, day)
+   */
   addExercise: async (id_paciente: number, exerciseData: any) => {
     console.log("[addExercise] Inicio =====================================");
     console.log("  - id_paciente:", id_paciente);
@@ -69,7 +77,7 @@ export const routineService = {
 
     let rutinaId: number | null = null;
 
-    // Buscar rutina activa
+    // 1. Buscar rutina activa
     console.log("[addExercise] Paso 1: Buscando rutina activa...");
     const { data: rutinas, error: findError } = await supabase
       .from("rutinas")
@@ -87,7 +95,7 @@ export const routineService = {
       rutinaId = rutinas[0].id_rutina;
       console.log("[addExercise] Rutina encontrada → id_rutina:", rutinaId);
     } else {
-      // Crear rutina nueva
+      // 2. Crear rutina nueva si no existe
       console.log("[addExercise] No hay rutina → creando...");
       const rutinaPayload = {
         id_paciente: id_paciente,
@@ -124,7 +132,7 @@ export const routineService = {
       console.log("[addExercise] Rutina creada → id_rutina:", rutinaId);
     }
 
-    // Obtener el siguiente orden (máximo actual + 1)
+    // 3. Obtener el siguiente orden (máximo actual + 1)
     const { data: maxOrdenData, error: maxError } = await supabase
       .from("rutina_ejercicios")
       .select("orden")
@@ -141,20 +149,23 @@ export const routineService = {
       nextOrden = (maxOrdenData[0].orden as number) + 1;
     }
 
+    // 4. Preparar datos del ejercicio
     const seriesParsed = parseInt(exerciseData.sets) || 3;
-    const repsTrimmed = exerciseData.reps.trim();
+    const repsTrimmed = exerciseData.reps?.trim() || "12";
     const desc =
-      exerciseData.duration !== "N/A"
-        ? `Duración: ${exerciseData.duration}`
+      exerciseData.duration && exerciseData.duration !== "N/A"
+        ? `Duración: ${exerciseData.duration} min`
         : null;
 
+    // ¡CAMBIO IMPORTANTE! Incluimos dia_semana
     const ejercicioPayload = {
       id_rutina: rutinaId,
       nombre_ejercicio: exerciseData.name.trim(),
       series: seriesParsed,
       repeticiones: repsTrimmed,
       descripcion: desc,
-      orden: nextOrden, // ← ¡Aquí está la corrección! Valor pequeño y secuencial
+      orden: nextOrden,
+      dia_semana: exerciseData.day, // ← Esto es lo que faltaba (1 a 7)
     };
 
     console.log(
@@ -170,7 +181,7 @@ export const routineService = {
 
     if (insertError) {
       console.error("[addExercise] ERROR al insertar ejercicio:", insertError);
-      return { data: null, error: insertError };
+      return { data: null, error: insertError.message || insertError };
     }
 
     console.log("[addExercise] ÉXITO - Ejercicio insertado:", inserted);
@@ -179,6 +190,9 @@ export const routineService = {
     return { data: inserted, error: null };
   },
 
+  /**
+   * Elimina un ejercicio por su ID
+   */
   deleteExercise: async (id_ejercicio: number) => {
     console.log("[deleteExercise] Eliminando id_ejercicio:", id_ejercicio);
 

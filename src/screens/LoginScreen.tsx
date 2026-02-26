@@ -2,13 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, Text, TextInput, StyleSheet, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
-  Modal, StatusBar, Dimensions
+  Modal, StatusBar, Dimensions, Animated, Easing
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { LinearGradient } from 'expo-linear-gradient';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const COLORS = {
   primary: '#2E8B57',
@@ -22,40 +23,90 @@ const COLORS = {
   success: '#2E7D32'
 };
 
-// --- COMPONENTE DE FONDO ESTÁTICO CON ICONOS ---
-const StaticBackgroundIcons = () => {
-  // Posiciones fijas para los iconos
-  const iconPositions = [
-    { top: '10%', left: '5%', name: 'leaf-outline', size: 45, opacity: 0.08 },
-    { top: '20%', right: '8%', name: 'nutrition-outline', size: 55, opacity: 0.08 },
-    { top: '45%', left: '15%', name: 'fitness-outline', size: 40, opacity: 0.08 },
-    { top: '60%', right: '12%', name: 'heart-outline', size: 50, opacity: 0.08 },
-    { top: '75%', left: '7%', name: 'water-outline', size: 35, opacity: 0.08 },
-    { top: '85%', right: '5%', name: 'restaurant-outline', size: 48, opacity: 0.08 },
-    { top: '30%', left: '25%', name: 'barbell-outline', size: 42, opacity: 0.08 },
-    { top: '50%', right: '20%', name: 'medkit-outline', size: 38, opacity: 0.08 },
-    { top: '15%', right: '25%', name: 'apple-outline', size: 52, opacity: 0.08 },
-    { top: '70%', left: '20%', name: 'walk-outline', size: 44, opacity: 0.08 },
-    { top: '40%', left: '8%', name: 'body-outline', size: 36, opacity: 0.08 },
-    { top: '80%', right: '18%', name: 'moon-outline', size: 40, opacity: 0.08 },
-  ];
+const AnimatedProfessionalBackground = () => {
+  const drift = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const driftLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(drift, {
+          toValue: 1,
+          duration: 12000,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(drift, {
+          toValue: 0,
+          duration: 12000,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 8000,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 8000,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    driftLoop.start();
+    pulseLoop.start();
+
+    return () => {
+      driftLoop.stop();
+      pulseLoop.stop();
+    };
+  }, [drift, pulse]);
+
+  const orb1TranslateY = drift.interpolate({ inputRange: [0, 1], outputRange: [-10, 18] });
+  const orb2TranslateY = drift.interpolate({ inputRange: [0, 1], outputRange: [14, -20] });
+  const orb1Scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
+  const orb2Scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1.05, 0.98] });
+  const orbOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.28] });
 
   return (
-    <View style={StyleSheet.absoluteFill}>
-      {iconPositions.map((icon, index) => (
-        <View
-          key={index}
-          style={{
-            position: 'absolute',
-            top: icon.top,
-            left: icon.left,
-            right: icon.right,
-            opacity: icon.opacity,
-          }}
-        >
-          <Ionicons name={icon.name} size={icon.size} color="#222" />
-        </View>
-      ))}
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <LinearGradient
+        colors={[COLORS.secondary, COLORS.white]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      <Animated.View
+        style={[
+          styles.animatedOrb,
+          styles.orbTop,
+          {
+            opacity: orbOpacity,
+            transform: [{ translateY: orb1TranslateY }, { scale: orb1Scale }],
+          },
+        ]}
+      />
+
+      <Animated.View
+        style={[
+          styles.animatedOrb,
+          styles.orbBottom,
+          {
+            opacity: orbOpacity,
+            transform: [{ translateY: orb2TranslateY }, { scale: orb2Scale }],
+          },
+        ]}
+      />
     </View>
   );
 };
@@ -65,6 +116,7 @@ export default function LoginScreen({ navigation }: any) {
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [modalVisible, setModalVisible] = useState({ show: false, title: '', message: '' });
   const [selectedGender, setSelectedGender] = useState<string>('');
@@ -110,8 +162,23 @@ export default function LoginScreen({ navigation }: any) {
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDateModal(false);
     if (selectedDate) {
-      setBirthDate(selectedDate);
-      updateForm('fecha_nacimiento', selectedDate.toISOString().split('T')[0]);
+      // CORRECCIÓN FINAL: Usamos directamente los valores locales del Date seleccionado
+      // Esto ignora por completo cualquier offset UTC/horario y guarda EXACTAMENTE el día que el usuario ve
+      const year = selectedDate.getFullYear();
+      const month = String(selectedDate.getMonth() + 1).padStart(2, '0'); // +1 porque getMonth es 0-11
+      const day = String(selectedDate.getDate()).padStart(2, '0');
+
+      const formattedDate = `${year}-${month}-${day}`;
+
+      // Guardamos la fecha formateada
+      updateForm('fecha_nacimiento', formattedDate);
+
+      // También actualizamos el estado birthDate con la fecha local (sin hora)
+      const localDate = new Date(year, selectedDate.getMonth(), selectedDate.getDate());
+      setBirthDate(localDate);
+
+      // Log para depurar (puedes quitarlo después)
+      console.log('Fecha seleccionada y guardada:', formattedDate);
     }
   };
 
@@ -165,31 +232,47 @@ export default function LoginScreen({ navigation }: any) {
   };
 
   const handleRecovery = async () => {
-    if (!form.email.trim()) {
+    const email = form.email.trim();
+    if (!email) {
       showAlert('Atención', 'Por favor ingresa tu correo electrónico.');
       return;
     }
 
-    setRecoveryLoading(true);
-    const result = await resetPassword(form.email.trim());
-    setRecoveryLoading(false);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      showAlert('Atención', 'Ingresa un correo electrónico válido.');
+      return;
+    }
 
-    if (result.success) {
-      showAlert(
-        'Enlace enviado',
-        'Se ha enviado un enlace de recuperación a tu correo. Revisa tu bandeja (incluyendo spam) y sigue las instrucciones.'
-      );
-    } else {
-      showAlert(
-        'Error',
-        result.error || 'No pudimos enviar el enlace. Verifica el correo e intenta nuevamente.'
-      );
+    setRecoveryLoading(true);
+    setRecoveryMessage('');
+
+    try {
+      const result = await resetPassword(email);
+
+      if (result.success) {
+        setRecoveryMessage('¡Enlace enviado! Revisa tu correo (incluye spam).');
+        Alert.alert(
+          'Enlace enviado',
+          'Te hemos enviado un enlace para restablecer tu contraseña. Revisa tu correo (incluyendo spam).',
+          [{ text: 'OK' }]
+        );
+      } else {
+        setRecoveryMessage(result.error || 'No pudimos enviar el enlace.');
+        showAlert('Error', result.error || 'No pudimos enviar el enlace. Intenta de nuevo.');
+      }
+    } catch (err: any) {
+      console.error('Error en recuperación:', err);
+      setRecoveryMessage('Error inesperado. Intenta más tarde.');
+      showAlert('Error', 'Ocurrió un error inesperado al enviar el enlace.');
+    } finally {
+      setRecoveryLoading(false);
     }
   };
 
   const renderDateText = () => {
     if (form.fecha_nacimiento) {
-      const date = new Date(form.fecha_nacimiento);
+      const date = new Date(form.fecha_nacimiento + 'T00:00:00'); // Añadimos hora 00:00 local para evitar offset
       return `${date.toLocaleDateString('es-MX')} (${calculateAge(form.fecha_nacimiento)})`;
     }
     return 'Seleccionar fecha';
@@ -198,7 +281,7 @@ export default function LoginScreen({ navigation }: any) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      <StaticBackgroundIcons />
+      <AnimatedProfessionalBackground />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -239,12 +322,26 @@ export default function LoginScreen({ navigation }: any) {
             )}
 
             {isLogin && (
-              <CustomInput icon="mail-outline" placeholder="Correo electrónico*" keyboardType="email-address" autoCapitalize="none" value={form.email} onChangeText={(t: string) => updateForm('email', t)} />
+              <CustomInput 
+                icon="mail-outline" 
+                placeholder="Correo electrónico*" 
+                keyboardType="email-address" 
+                autoCapitalize="none" 
+                value={form.email} 
+                onChangeText={(t: string) => updateForm('email', t)} 
+              />
             )}
 
             <View style={styles.inputWrapper}>
               <Ionicons name="lock-closed-outline" size={20} color={COLORS.primary} style={styles.inputIcon} />
-              <TextInput style={styles.input} placeholder="Contraseña*" placeholderTextColor="#999" secureTextEntry={!showPassword} value={form.password} onChangeText={(t: string) => updateForm('password', t)} />
+              <TextInput 
+                style={styles.input} 
+                placeholder="Contraseña*" 
+                placeholderTextColor="#999" 
+                secureTextEntry={!showPassword} 
+                value={form.password} 
+                onChangeText={(t: string) => updateForm('password', t)} 
+              />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                 <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={COLORS.textLight} />
               </TouchableOpacity>
@@ -268,17 +365,30 @@ export default function LoginScreen({ navigation }: any) {
             )}
 
             {isLogin && (
-              <TouchableOpacity 
-                onPress={handleRecovery} 
-                style={styles.forgotBtn}
-                disabled={recoveryLoading}
-              >
-                {recoveryLoading ? (
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                ) : (
-                  <Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.recoverySection}>
+                <TouchableOpacity 
+                  onPress={handleRecovery} 
+                  style={styles.forgotBtn}
+                  disabled={recoveryLoading}
+                >
+                  {recoveryLoading ? (
+                    <ActivityIndicator size="small" color={COLORS.primary} />
+                  ) : (
+                    <Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text>
+                  )}
+                </TouchableOpacity>
+
+                {recoveryMessage ? (
+                  <Text style={[
+                    styles.recoveryMessage,
+                    recoveryMessage.includes('Error') || recoveryMessage.includes('No pudimos') 
+                      ? { color: COLORS.error } 
+                      : { color: COLORS.success }
+                  ]}>
+                    {recoveryMessage}
+                  </Text>
+                ) : null}
+              </View>
             )}
 
             <TouchableOpacity 
@@ -358,6 +468,24 @@ const CustomInput = ({ icon, style, placeholder, ...props }: any) => (
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.secondary },
   scrollContent: { flexGrow: 1, paddingHorizontal: 20, justifyContent: 'center', paddingTop: 40, paddingBottom: 20 },
+  animatedOrb: {
+    position: 'absolute',
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+  },
+  orbTop: {
+    width: width * 0.7,
+    height: width * 0.7,
+    top: -width * 0.22,
+    left: -width * 0.2,
+  },
+  orbBottom: {
+    width: width * 0.8,
+    height: width * 0.8,
+    right: -width * 0.28,
+    bottom: -height * 0.06,
+    backgroundColor: COLORS.accent,
+  },
   header: { alignItems: 'center', marginBottom: 30 },
   brandName: { fontSize: 32, fontWeight: '900', color: COLORS.primary, letterSpacing: 2 },
   underline: { width: 40, height: 4, backgroundColor: COLORS.accent, marginTop: 5, borderRadius: 2 },
@@ -376,8 +504,25 @@ const styles = StyleSheet.create({
   genderButtonActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   genderButtonText: { fontSize: 14, fontWeight: '600', color: COLORS.textLight },
   genderButtonTextActive: { color: COLORS.white, fontWeight: '700' },
-  forgotBtn: { alignSelf: 'flex-end', marginBottom: 20 },
-  forgotText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
+  recoverySection: {
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  forgotBtn: {
+    alignSelf: 'center',
+  },
+  forgotText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  recoveryMessage: {
+    marginTop: 12,
+    fontSize: 14,
+    textAlign: 'center',
+    fontWeight: '600',
+  },
   mainBtn: { backgroundColor: COLORS.primary, paddingVertical: 16, borderRadius: 12, alignItems: 'center', elevation: 4 },
   mainBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 14, letterSpacing: 1 },
   switchBtn: { marginTop: 20, alignItems: 'center' },

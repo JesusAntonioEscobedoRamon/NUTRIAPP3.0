@@ -42,6 +42,10 @@ const COLORS = {
   pendingLight: '#FFF3CD',
   info: '#17A2B8',
   infoLight: '#E3F2FD',
+  pendingPayment: '#FF9800',
+  pendingPaymentLight: '#FFF3E0',
+  paid: '#2196F3',
+  paidLight: '#E3F2FD',
 };
 
 const PAYMENT_COLORS = {
@@ -71,12 +75,14 @@ export default function ScheduleScreen({ navigation, route }: any) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentStep, setPaymentStep] = useState<'selection' | 'checkout' | 'success'>('selection');
 
-  const [cardDetails, setCardDetails] = useState(null);
+  const [cardDetails, setCardDetails] = useState<any>(null);
   const [cardName, setCardName] = useState('');
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [citaId, setCitaId] = useState<number | null>(null);
 
-  const [pendingAppointments, setPendingAppointments] = useState<any[]>([]);
+  // Separar citas pendientes en dos categorías
+  const [pendingPaymentAppointments, setPendingPaymentAppointments] = useState<any[]>([]);
+  const [paidPendingAppointments, setPaidPendingAppointments] = useState<any[]>([]);
   const [confirmedAppointments, setConfirmedAppointments] = useState<any[]>([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(true);
 
@@ -101,6 +107,13 @@ export default function ScheduleScreen({ navigation, route }: any) {
       setPaymentStep('checkout');
     }
   }, [route.params]);
+
+  useEffect(() => {
+    const initialTab = route.params?.initialTab;
+    if (initialTab && ['agendar', 'pendientes', 'confirmadas'].includes(initialTab)) {
+      setViewMode(initialTab);
+    }
+  }, [route.params?.initialTab]);
 
   // Animaciones de loading
   const pulseValue = useRef(new Animated.Value(1)).current;
@@ -212,6 +225,14 @@ export default function ScheduleScreen({ navigation, route }: any) {
   const fetchAppointments = async () => {
     if (!patientData?.id_paciente) return;
 
+    if (!nutriologo?.id_nutriologo) {
+      setPendingPaymentAppointments([]);
+      setPaidPendingAppointments([]);
+      setConfirmedAppointments([]);
+      setAppointmentsLoading(false);
+      return;
+    }
+
     try {
       setAppointmentsLoading(true);
       const { data, error } = await supabase
@@ -220,6 +241,12 @@ export default function ScheduleScreen({ navigation, route }: any) {
           id_cita,
           fecha_hora,
           estado,
+          metodo_pago,
+          pagos!left (
+            id_pago,
+            estado,
+            stripe_payment_id
+          ),
           nutriologos!inner (
             id_nutriologo,
             nombre,
@@ -230,7 +257,8 @@ export default function ScheduleScreen({ navigation, route }: any) {
           )
         `)
         .eq('id_paciente', patientData.id_paciente)
-        .in('estado', ['pendiente', 'confirmada', 'completada'])
+        .eq('id_nutriologo', nutriologo.id_nutriologo)
+        .in('estado', ['pendiente', 'pagada', 'confirmada', 'completada'])
         .order('fecha_hora', { ascending: false });
 
       if (error) {
@@ -239,8 +267,10 @@ export default function ScheduleScreen({ navigation, route }: any) {
         return;
       }
 
-      const formatted = data?.map(cita => {
-        const nutri = cita.nutriologos;
+      const formatted = (data?.map(cita => {
+        const nutri: any = Array.isArray(cita.nutriologos) ? cita.nutriologos[0] : cita.nutriologos;
+        if (!nutri) return null;
+
         const fechaHora = new Date(cita.fecha_hora);
 
         const fecha = fechaHora.toLocaleDateString('es-MX', { 
@@ -260,21 +290,53 @@ export default function ScheduleScreen({ navigation, route }: any) {
           ? nutri.foto_perfil
           : null;
 
+        // Determinar si tiene pago
+        const pagos = Array.isArray(cita.pagos) ? cita.pagos : [];
+        const tienePago = pagos.length > 0 && pagos[0]?.estado === 'completado';
+        
+        // Estado real basado en pago y estado de cita
+        let estadoReal = cita.estado;
+        if (cita.estado === 'pendiente' && tienePago) {
+          estadoReal = 'pagada';
+        }
+
         return {
           id: cita.id_cita,
           doctorName: `Dr. ${nutri.nombre} ${nutri.apellido}`,
           doctorPhoto: photoUrl,
           fecha,
           hora,
+          fechaHoraOriginal: cita.fecha_hora,
           monto: nutri.tarifa_consulta || 800,
           especialidad: nutri.especialidad || 'Nutrición Clínica',
-          estado: cita.estado,
+          estado: estadoReal,
+          estadoOriginal: cita.estado,
           id_nutriologo: nutri.id_nutriologo,
+          tienePago,
+          pagoInfo: pagos.length > 0 ? pagos[0] : null,
         };
-      }) || [];
+      }) || []).filter((item): item is any => item !== null);
 
-      setPendingAppointments(formatted.filter(a => a.estado === 'pendiente'));
-      setConfirmedAppointments(formatted.filter(a => a.estado !== 'pendiente'));
+      // Separar citas pendientes
+      const pendingPayment = formatted.filter((a: any) => 
+        a && a.estado === 'pendiente' && !a.tienePago
+      );
+      
+      const paidPending = formatted.filter((a: any) => 
+        a && (a.estado === 'pagada' || (a.estado === 'pendiente' && a.tienePago))
+      );
+      
+      const confirmed = formatted.filter((a: any) => 
+        a && (a.estado === 'confirmada' || a.estado === 'completada')
+      );
+
+      const confirmedForActiveNutriologo = nutriologo
+        ? confirmed.filter((a: any) => a.id_nutriologo === nutriologo.id_nutriologo)
+        : [];
+
+      setPendingPaymentAppointments(pendingPayment);
+      setPaidPendingAppointments(paidPending);
+      setConfirmedAppointments(confirmedForActiveNutriologo);
     } catch (err) {
       console.error('Excepción al cargar citas:', err);
     } finally {
@@ -290,7 +352,13 @@ export default function ScheduleScreen({ navigation, route }: any) {
   // Cargar citas del paciente
   useEffect(() => {
     fetchAppointments();
-  }, [patientData?.id_paciente]);
+  }, [patientData?.id_paciente, nutriologo?.id_nutriologo]);
+
+  useEffect(() => {
+    if (!nutriologo) {
+      setConfirmedAppointments([]);
+    }
+  }, [nutriologo]);
 
   const handleSelectDoctor = async (doctor: any) => {
     // Verificar si ya es su nutriólogo de cabecera
@@ -307,6 +375,16 @@ export default function ScheduleScreen({ navigation, route }: any) {
       doctorId: doctor.realId,
       precio: doctor.price,
     });
+  };
+
+  const handlePaymentFromPending = (appointment: any) => {
+    setSelectedDoctor({
+      name: appointment.doctorName,
+      realId: appointment.id_nutriologo,
+      price: appointment.monto
+    });
+    setCitaId(appointment.id);
+    setPaymentStep('checkout');
   };
 
   const handlePayment = async () => {
@@ -441,6 +519,8 @@ export default function ScheduleScreen({ navigation, route }: any) {
         console.error('Error en asignación de nutriólogo:', error);
       }
 
+      // Recargar citas y cambiar vista
+      await fetchAppointments();
       setViewMode('pendientes');
       setPaymentStep('success');
 
@@ -551,7 +631,8 @@ export default function ScheduleScreen({ navigation, route }: any) {
               styles.navText,
               viewMode === tab && styles.navTextActive
             ]}>
-              {tab.toUpperCase()}
+              {tab === 'agendar' ? 'AGENDAR' : 
+               tab === 'pendientes' ? 'PENDIENTES' : 'CONFIRMADAS'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -575,7 +656,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
           <>
             <View style={styles.introSection}>
               <Text style={styles.mainTitle}>Reserva tu Consulta</Text>
-              <Text style={styles.subtitle}>Selecciona un especialista para proceder con tu registro y pago seguro.</Text>
+              <Text style={styles.subtitle}>Elige entre todos los nutriólogos disponibles y agenda de forma rápida.</Text>
             </View>
 
             {doctors.map((doctor) => (
@@ -598,15 +679,30 @@ export default function ScheduleScreen({ navigation, route }: any) {
                 </View>
 
                 <View style={styles.doctorInfo}>
-                  <Text style={styles.doctorName}>{doctor.name}</Text>
-                  <View style={styles.specialtyRow}>
-                    <View style={styles.specialtyDot} />
-                    <Text style={styles.doctorSpecialty}>{doctor.specialty}</Text>
+                  <View style={styles.doctorTopRow}>
+                    <Text style={styles.doctorName} numberOfLines={1}>{doctor.name}</Text>
+                    <View style={styles.availableBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color={COLORS.primary} />
+                      <Text style={styles.availableBadgeText}>Disponible</Text>
+                    </View>
                   </View>
-                </View>
 
-                <View style={styles.priceTag}>
-                  <Text style={styles.priceText}>${doctor.price.toLocaleString('es-MX')}</Text>
+                  <View style={styles.specialtyPill}>
+                    <Ionicons name="medkit-outline" size={13} color={COLORS.primary} />
+                    <Text style={styles.doctorSpecialty} numberOfLines={1}>{doctor.specialty}</Text>
+                  </View>
+
+                  <View style={styles.doctorBottomRow}>
+                    <View style={styles.priceTag}>
+                      <Text style={styles.priceLabel}>Consulta</Text>
+                      <Text style={styles.priceText}>${doctor.price.toLocaleString('es-MX')}</Text>
+                    </View>
+
+                    <View style={styles.doctorActionPill}>
+                      <Text style={styles.doctorActionText}>Agendar</Text>
+                      <Ionicons name="chevron-forward" size={14} color={COLORS.primary} />
+                    </View>
+                  </View>
                 </View>
               </TouchableOpacity>
             ))}
@@ -622,14 +718,15 @@ export default function ScheduleScreen({ navigation, route }: any) {
 
         {viewMode === 'pendientes' && (
           <View style={styles.appointmentsSection}>
+            {/* CITAS PENDIENTES DE PAGO */}
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Próximas Citas (Pendientes de atención)</Text>
-              <MaterialCommunityIcons name="clock-outline" size={24} color={COLORS.pending} />
+              <Text style={styles.sectionTitle}>Pendientes de Pago</Text>
+              <MaterialCommunityIcons name="credit-card-outline" size={24} color={COLORS.pendingPayment} />
             </View>
 
-            {pendingAppointments.length > 0 ? (
+            {pendingPaymentAppointments.length > 0 ? (
               <View style={styles.appointmentsList}>
-                {pendingAppointments.map((appointment) => (
+                {pendingPaymentAppointments.map((appointment) => (
                   <View key={appointment.id} style={styles.appointmentCard}>
                     <View style={styles.appointmentHeader}>
                       <View style={styles.appointmentAvatar}>
@@ -643,15 +740,72 @@ export default function ScheduleScreen({ navigation, route }: any) {
                           <MaterialCommunityIcons name="doctor" size={20} color={COLORS.primary} />
                         )}
                       </View>
-                      <Text style={styles.appointmentDoctor}>{appointment.doctorName}</Text>
-
-                      <View style={[styles.statusBadge, styles.pendingBadge]}>
-                        <Ionicons name="time-outline" size={14} color={COLORS.pending} />
-                        <Text style={styles.statusBadgeText}>Pendiente</Text>
+                      <View style={styles.appointmentInfo}>
+                        <Text style={styles.appointmentDoctor}>{appointment.doctorName}</Text>
+                        <Text style={styles.appointmentDateTime}>{appointment.fecha} - {appointment.hora}</Text>
                       </View>
                     </View>
 
                     <View style={styles.appointmentFooter}>
+                      <View style={[styles.statusBadge, styles.pendingPaymentBadge]}>
+                        <Ionicons name="time-outline" size={14} color={COLORS.pendingPayment} />
+                        <Text style={styles.statusBadgeText}>Pendiente de pago</Text>
+                      </View>
+                      
+                      <TouchableOpacity 
+                        style={styles.payNowButton}
+                        onPress={() => handlePaymentFromPending(appointment)}
+                      >
+                        <Text style={styles.payNowText}>PAGAR AHORA</Text>
+                        <Ionicons name="card-outline" size={16} color={COLORS.white} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyAppointments}>
+                <MaterialCommunityIcons name="credit-card-outline" size={50} color={COLORS.border} />
+                <Text style={styles.emptyAppointmentsText}>
+                  No tienes citas pendientes de pago
+                </Text>
+              </View>
+            )}
+
+            {/* CITAS PAGADAS EN ESPERA DE CONFIRMACIÓN */}
+            <View style={[styles.sectionHeader, { marginTop: 30 }]}>
+              <Text style={styles.sectionTitle}>Pagadas - Esperando Confirmación</Text>
+              <MaterialCommunityIcons name="clock-check-outline" size={24} color={COLORS.paid} />
+            </View>
+
+            {paidPendingAppointments.length > 0 ? (
+              <View style={styles.appointmentsList}>
+                {paidPendingAppointments.map((appointment) => (
+                  <View key={appointment.id} style={styles.appointmentCard}>
+                    <View style={styles.appointmentHeader}>
+                      <View style={styles.appointmentAvatar}>
+                        {appointment.doctorPhoto ? (
+                          <Image 
+                            source={{ uri: appointment.doctorPhoto }} 
+                            style={{ width: '100%', height: '100%', borderRadius: 12 }} 
+                            resizeMode="cover" 
+                          />
+                        ) : (
+                          <MaterialCommunityIcons name="doctor" size={20} color={COLORS.primary} />
+                        )}
+                      </View>
+                      <View style={styles.appointmentInfo}>
+                        <Text style={styles.appointmentDoctor}>{appointment.doctorName}</Text>
+                        <Text style={styles.appointmentDateTime}>{appointment.fecha} - {appointment.hora}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.appointmentFooter}>
+                      <View style={[styles.statusBadge, styles.paidBadge]}>
+                        <Ionicons name="checkmark-circle" size={14} color={COLORS.paid} />
+                        <Text style={styles.statusBadgeText}>Pagada - Pendiente</Text>
+                      </View>
+                      
                       <TouchableOpacity 
                         style={styles.viewDetailsButton}
                         onPress={() => showAppointmentDetails(appointment)}
@@ -665,12 +819,9 @@ export default function ScheduleScreen({ navigation, route }: any) {
               </View>
             ) : (
               <View style={styles.emptyAppointments}>
-                <MaterialCommunityIcons name="clock-outline" size={50} color={COLORS.pending} />
+                <MaterialCommunityIcons name="clock-check-outline" size={50} color={COLORS.border} />
                 <Text style={styles.emptyAppointmentsText}>
-                  No tienes citas pendientes
-                </Text>
-                <Text style={styles.emptyAppointmentsSubtext}>
-                  Agenda tu próxima consulta en la pestaña "AGENDAR"
+                  No tienes citas pagadas en espera
                 </Text>
               </View>
             )}
@@ -700,17 +851,24 @@ export default function ScheduleScreen({ navigation, route }: any) {
                           <MaterialCommunityIcons name="doctor" size={20} color={COLORS.primary} />
                         )}
                       </View>
-                      <Text style={styles.appointmentDoctor}>{appointment.doctorName}</Text>
-
-                      <View style={[styles.statusBadge, styles.confirmedBadge]}>
-                        <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
-                        <Text style={styles.statusBadgeText}>
-                          {appointment.estado === 'confirmada' ? 'Confirmada' : 'Atendida'}
-                        </Text>
+                      <View style={styles.appointmentInfo}>
+                        <Text style={styles.appointmentDoctor}>{appointment.doctorName}</Text>
+                        <Text style={styles.appointmentDateTime}>{appointment.fecha} - {appointment.hora}</Text>
                       </View>
                     </View>
 
                     <View style={styles.appointmentFooter}>
+                      <View style={[styles.statusBadge, appointment.estado === 'confirmada' ? styles.confirmedBadge : styles.completedBadge]}>
+                        <Ionicons 
+                          name={appointment.estado === 'confirmada' ? "checkmark-circle" : "checkmark-done-circle"} 
+                          size={14} 
+                          color={appointment.estado === 'confirmada' ? COLORS.success : COLORS.primary} 
+                        />
+                        <Text style={styles.statusBadgeText}>
+                          {appointment.estado === 'confirmada' ? 'Confirmada' : 'Atendida'}
+                        </Text>
+                      </View>
+                      
                       <TouchableOpacity 
                         style={styles.viewDetailsButton}
                         onPress={() => showAppointmentDetails(appointment)}
@@ -737,7 +895,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
         )}
       </ScrollView>
 
-      {/* MODAL DE DETALLES */}
+      {/* MODAL DE DETALLES (MEJORADO) */}
       <Modal
         visible={detailsModalVisible}
         transparent={true}
@@ -748,14 +906,14 @@ export default function ScheduleScreen({ navigation, route }: any) {
           <View style={detailsModalStyles.container}>
             <View style={detailsModalStyles.header}>
               <View style={detailsModalStyles.headerIcon}>
-                <MaterialCommunityIcons name="calendar-check" size={30} color={COLORS.white} />
+                <MaterialCommunityIcons name="calendar-check" size={24} color={COLORS.white} />
               </View>
               <Text style={detailsModalStyles.headerTitle}>Detalles de la Cita</Text>
               <TouchableOpacity 
                 onPress={() => setDetailsModalVisible(false)}
                 style={detailsModalStyles.closeButton}
               >
-                <Ionicons name="close" size={24} color={COLORS.textLight} />
+                <Ionicons name="close" size={22} color={COLORS.textDark} />
               </TouchableOpacity>
             </View>
 
@@ -766,11 +924,11 @@ export default function ScheduleScreen({ navigation, route }: any) {
                     {selectedAppointment.doctorPhoto ? (
                       <Image 
                         source={{ uri: selectedAppointment.doctorPhoto }} 
-                        style={{ width: '100%', height: '100%', borderRadius: 35 }} 
+                        style={{ width: '100%', height: '100%', borderRadius: 30 }} 
                         resizeMode="cover" 
                       />
                     ) : (
-                      <MaterialCommunityIcons name="doctor" size={40} color={COLORS.primary} />
+                      <MaterialCommunityIcons name="doctor" size={30} color={COLORS.primary} />
                     )}
                   </View>
                   <View style={detailsModalStyles.doctorInfo}>
@@ -782,59 +940,98 @@ export default function ScheduleScreen({ navigation, route }: any) {
                 <View style={detailsModalStyles.divider} />
 
                 <View style={detailsModalStyles.detailsCard}>
-                  <View style={detailsModalStyles.detailItem}>
-                    <View style={detailsModalStyles.detailIconContainer}>
-                      <Ionicons name="calendar-outline" size={22} color={COLORS.primary} />
+                  <View style={detailsModalStyles.detailRow}>
+                    <View style={detailsModalStyles.detailIcon}>
+                      <Ionicons name="calendar-outline" size={20} color={COLORS.primary} />
                     </View>
-                    <View style={detailsModalStyles.detailTextContainer}>
+                    <View style={detailsModalStyles.detailContent}>
                       <Text style={detailsModalStyles.detailLabel}>Fecha</Text>
                       <Text style={detailsModalStyles.detailValue}>{selectedAppointment.fecha}</Text>
                     </View>
                   </View>
 
-                  <View style={detailsModalStyles.detailItem}>
-                    <View style={detailsModalStyles.detailIconContainer}>
-                      <Ionicons name="time-outline" size={22} color={COLORS.primary} />
+                  <View style={detailsModalStyles.detailRow}>
+                    <View style={detailsModalStyles.detailIcon}>
+                      <Ionicons name="time-outline" size={20} color={COLORS.primary} />
                     </View>
-                    <View style={detailsModalStyles.detailTextContainer}>
+                    <View style={detailsModalStyles.detailContent}>
                       <Text style={detailsModalStyles.detailLabel}>Hora</Text>
                       <Text style={detailsModalStyles.detailValue}>{selectedAppointment.hora}</Text>
                     </View>
                   </View>
 
-                  <View style={detailsModalStyles.detailItem}>
-                    <View style={detailsModalStyles.detailIconContainer}>
-                      <Ionicons name="cash-outline" size={22} color={COLORS.primary} />
+                  <View style={detailsModalStyles.detailRow}>
+                    <View style={detailsModalStyles.detailIcon}>
+                      <Ionicons name="cash-outline" size={20} color={COLORS.primary} />
                     </View>
-                    <View style={detailsModalStyles.detailTextContainer}>
+                    <View style={detailsModalStyles.detailContent}>
                       <Text style={detailsModalStyles.detailLabel}>Monto</Text>
                       <Text style={detailsModalStyles.detailValue}>${selectedAppointment.monto.toLocaleString('es-MX')} MXN</Text>
                     </View>
                   </View>
+
+                  {selectedAppointment.tienePago && (
+                    <View style={detailsModalStyles.detailRow}>
+                      <View style={detailsModalStyles.detailIcon}>
+                        <Ionicons name="card-outline" size={20} color={COLORS.success} />
+                      </View>
+                      <View style={detailsModalStyles.detailContent}>
+                        <Text style={detailsModalStyles.detailLabel}>Pago</Text>
+                        <Text style={[detailsModalStyles.detailValue, { color: COLORS.success }]}>
+                          Completado
+                        </Text>
+                      </View>
+                    </View>
+                  )}
                 </View>
 
                 <View style={detailsModalStyles.statusSection}>
                   <View style={[
-                    styles.statusBadge,
-                    selectedAppointment.estado === 'pendiente' ? styles.pendingBadge : styles.confirmedBadge
+                    detailsModalStyles.statusBadge,
+                    selectedAppointment.estado === 'pendiente' && !selectedAppointment.tienePago ? detailsModalStyles.pendingPaymentStatus :
+                    selectedAppointment.estado === 'pagada' || (selectedAppointment.estado === 'pendiente' && selectedAppointment.tienePago) ? detailsModalStyles.paidStatus :
+                    selectedAppointment.estado === 'confirmada' ? detailsModalStyles.confirmedStatus :
+                    detailsModalStyles.completedStatus
                   ]}>
                     <Ionicons 
-                      name={selectedAppointment.estado === 'pendiente' ? "time-outline" : "checkmark-circle"} 
+                      name={
+                        selectedAppointment.estado === 'pendiente' && !selectedAppointment.tienePago ? "time-outline" :
+                        selectedAppointment.estado === 'pagada' || (selectedAppointment.estado === 'pendiente' && selectedAppointment.tienePago) ? "card-outline" :
+                        selectedAppointment.estado === 'confirmada' ? "checkmark-circle" : "checkmark-done-circle"
+                      } 
                       size={16} 
-                      color={selectedAppointment.estado === 'pendiente' ? COLORS.pending : COLORS.success} 
+                      color={
+                        selectedAppointment.estado === 'pendiente' && !selectedAppointment.tienePago ? COLORS.pendingPayment :
+                        selectedAppointment.estado === 'pagada' || (selectedAppointment.estado === 'pendiente' && selectedAppointment.tienePago) ? COLORS.paid :
+                        selectedAppointment.estado === 'confirmada' ? COLORS.success : COLORS.primary
+                      } 
                     />
-                    <Text style={styles.statusBadgeText}>
-                      {selectedAppointment.estado === 'pendiente' ? 'Pendiente de atención' :
+                    <Text style={detailsModalStyles.statusText}>
+                      {selectedAppointment.estado === 'pendiente' && !selectedAppointment.tienePago ? 'Pendiente de pago' :
+                       selectedAppointment.estado === 'pagada' || (selectedAppointment.estado === 'pendiente' && selectedAppointment.tienePago) ? 'Pagada - Esperando confirmación' :
                        selectedAppointment.estado === 'confirmada' ? 'Confirmada' : 'Atendida'}
                     </Text>
                   </View>
                 </View>
 
+                {selectedAppointment.estado === 'pendiente' && !selectedAppointment.tienePago && (
+                  <TouchableOpacity 
+                    style={detailsModalStyles.payButton}
+                    onPress={() => {
+                      setDetailsModalVisible(false);
+                      handlePaymentFromPending(selectedAppointment);
+                    }}
+                  >
+                    <Text style={detailsModalStyles.payButtonText}>PAGAR AHORA</Text>
+                    <Ionicons name="card-outline" size={18} color={COLORS.white} />
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity 
                   style={detailsModalStyles.closeButton2}
                   onPress={() => setDetailsModalVisible(false)}
                 >
-                  <Text style={detailsModalStyles.closeButtonText}>Cerrar</Text>
+                  <Text style={detailsModalStyles.closeButtonText}>CERRAR</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -951,7 +1148,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
         </View>
       </Modal>
 
-      {/* MODAL INFORMATIVO - NUTRIÓLOGO YA ASIGNADO (VERSIÓN REDUCIDA) */}
+      {/* MODAL INFORMATIVO - NUTRIÓLOGO YA ASIGNADO */}
       <Modal
         visible={nutriologoInfoModal}
         transparent={true}
@@ -1065,30 +1262,70 @@ const styles = StyleSheet.create({
   mainTitle: { fontSize: 22, fontWeight: '900', color: COLORS.textDark, textAlign: 'center' },
   subtitle: { fontSize: 14, color: COLORS.textLight, textAlign: 'center', marginTop: 8, fontWeight: '600', lineHeight: 20 },
 
-  doctorCard: { backgroundColor: COLORS.white, padding: 18, borderRadius: 22, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: COLORS.border, elevation: 2 },
-  avatarContainer: { width: 55, height: 55, borderRadius: 18, backgroundColor: COLORS.secondary, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
-  doctorInfo: { flex: 1, marginLeft: 15 },
-  doctorName: { fontSize: 17, fontWeight: '900', color: COLORS.textDark },
+  doctorsSummaryCard: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    elevation: 2,
+  },
+  doctorsSummaryIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: COLORS.secondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  doctorsSummaryTextWrap: { flex: 1 },
+  doctorsSummaryTitle: { fontSize: 14, fontWeight: '800', color: COLORS.textDark },
+  doctorsSummarySubtext: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
+
+  doctorCard: { backgroundColor: COLORS.white, padding: 16, borderRadius: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.border, elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4 },
+  avatarContainer: { width: 58, height: 58, borderRadius: 18, backgroundColor: COLORS.secondary, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  doctorInfo: { flex: 1, marginLeft: 14 },
+  doctorTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  doctorName: { flex: 1, fontSize: 16, fontWeight: '900', color: COLORS.textDark, marginRight: 8 },
+  availableBadge: { backgroundColor: COLORS.secondary, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  availableBadgeText: { color: COLORS.primary, fontSize: 10, fontWeight: '800' },
   specialtyRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   specialtyDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.accent, marginRight: 6 },
-  doctorSpecialty: { fontSize: 13, color: COLORS.primary, fontWeight: '700' },
-  priceTag: { backgroundColor: COLORS.secondary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: COLORS.border },
+  specialtyPill: { marginTop: 8, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.secondary, borderRadius: 10, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 10, paddingVertical: 5, maxWidth: '100%' },
+  doctorSpecialty: { fontSize: 12, color: COLORS.primary, fontWeight: '700', flexShrink: 1 },
+  doctorBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
+  consultText: { fontSize: 11, color: COLORS.textLight, fontWeight: '700' },
+  priceTag: { backgroundColor: COLORS.secondary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: COLORS.border },
+  priceLabel: { fontSize: 9, color: COLORS.textLight, fontWeight: '700', marginBottom: 1 },
   priceText: { fontWeight: '900', color: COLORS.primary, fontSize: 14 },
+  doctorActionPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: COLORS.primary, backgroundColor: COLORS.white },
+  doctorActionText: { fontSize: 11, color: COLORS.primary, fontWeight: '900' },
 
   appointmentsSection: { marginTop: 30, marginBottom: 20 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 },
   sectionTitle: { fontSize: 20, fontWeight: '900', color: COLORS.textDark },
   appointmentsList: { gap: 12 },
   appointmentCard: { backgroundColor: COLORS.white, borderRadius: 20, padding: 16, borderWidth: 2, borderColor: COLORS.border, elevation: 2 },
-  appointmentHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border, paddingBottom: 8 },
-  appointmentAvatar: { width: 40, height: 40, borderRadius: 12, backgroundColor: COLORS.secondary, justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
-  appointmentDoctor: { fontSize: 16, fontWeight: '900', color: COLORS.primary, flex: 1 },
-  appointmentFooter: { marginTop: 12, alignItems: 'flex-end' },
-  viewDetailsButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.secondary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: COLORS.primary },
+  appointmentHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  appointmentAvatar: { width: 45, height: 45, borderRadius: 12, backgroundColor: COLORS.secondary, justifyContent: 'center', alignItems: 'center', marginRight: 12, overflow: 'hidden' },
+  appointmentInfo: { flex: 1 },
+  appointmentDoctor: { fontSize: 16, fontWeight: '900', color: COLORS.primary },
+  appointmentDateTime: { fontSize: 12, color: COLORS.textLight, marginTop: 2, fontWeight: '600' },
+  appointmentFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12 },
+  viewDetailsButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.secondary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: COLORS.primary },
   viewDetailsText: { fontSize: 12, color: COLORS.primary, fontWeight: '800', marginRight: 4 },
+  payNowButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, gap: 6 },
+  payNowText: { fontSize: 12, color: COLORS.white, fontWeight: '900' },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pendingPaymentBadge: { backgroundColor: COLORS.pendingPaymentLight, borderWidth: 1, borderColor: COLORS.pendingPayment },
+  paidBadge: { backgroundColor: COLORS.paidLight, borderWidth: 1, borderColor: COLORS.paid },
   pendingBadge: { backgroundColor: COLORS.pendingLight, borderWidth: 1, borderColor: COLORS.pending },
   confirmedBadge: { backgroundColor: '#D4EDDA', borderWidth: 1, borderColor: COLORS.success },
+  completedBadge: { backgroundColor: COLORS.infoLight, borderWidth: 1, borderColor: COLORS.info },
   statusBadgeText: { fontSize: 12, fontWeight: '700', color: COLORS.textDark },
   emptyAppointments: { backgroundColor: COLORS.white, borderRadius: 20, padding: 30, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: COLORS.border, borderStyle: 'dashed' },
   emptyAppointmentsText: { fontSize: 16, fontWeight: '800', color: COLORS.textLight, marginTop: 12, textAlign: 'center' },
@@ -1140,13 +1377,14 @@ const detailsModalStyles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.3,
     shadowRadius: 10,
+    width: '90%',
+    maxWidth: 400,
   },
   header: {
     backgroundColor: COLORS.primary,
-    padding: 15,
+    padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    position: 'relative',
   },
   headerIcon: {
     width: 40,
@@ -1155,7 +1393,7 @@ const detailsModalStyles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 12,
   },
   headerTitle: {
     fontSize: 18,
@@ -1164,8 +1402,8 @@ const detailsModalStyles = StyleSheet.create({
     flex: 1,
   },
   closeButton: {
-    width: 35,
-    height: 35,
+    width: 36,
+    height: 36,
     borderRadius: 18,
     backgroundColor: COLORS.white,
     justifyContent: 'center',
@@ -1174,12 +1412,135 @@ const detailsModalStyles = StyleSheet.create({
   content: {
     padding: 20,
   },
-  closeButton2: {
+  doctorSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  doctorAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.secondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+  },
+  doctorInfo: {
+    flex: 1,
+  },
+  doctorName: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: COLORS.primary,
+    marginBottom: 4,
+  },
+  doctorSpecialty: {
+    fontSize: 14,
+    color: COLORS.textLight,
+    fontWeight: '600',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 16,
+  },
+  detailsCard: {
+    backgroundColor: COLORS.secondary,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  detailIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  detailContent: {
+    flex: 1,
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: COLORS.textLight,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  detailValue: {
+    fontSize: 15,
+    color: COLORS.textDark,
+    fontWeight: '800',
+  },
+  statusSection: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 8,
+  },
+  pendingPaymentStatus: {
+    backgroundColor: COLORS.pendingPaymentLight,
+    borderWidth: 1,
+    borderColor: COLORS.pendingPayment,
+  },
+  paidStatus: {
+    backgroundColor: COLORS.paidLight,
+    borderWidth: 1,
+    borderColor: COLORS.paid,
+  },
+  confirmedStatus: {
+    backgroundColor: '#D4EDDA',
+    borderWidth: 1,
+    borderColor: COLORS.success,
+  },
+  completedStatus: {
+    backgroundColor: COLORS.infoLight,
+    borderWidth: 1,
+    borderColor: COLORS.info,
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  payButton: {
     backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    gap: 8,
+  },
+  payButtonText: {
+    color: COLORS.white,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  closeButton2: {
+    backgroundColor: COLORS.textLight,
     padding: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 5,
   },
   closeButtonText: {
     color: COLORS.white,
@@ -1267,4 +1628,4 @@ const paymentStyles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 12,
   },
-}); 
+});

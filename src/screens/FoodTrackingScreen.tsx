@@ -15,6 +15,7 @@ import {
   Animated,
   Easing,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { useUser } from '../hooks/useUser';
 import { useNutriologo } from '../context/NutriologoContext';
@@ -40,12 +41,40 @@ const COLORS = {
   blockedText: '#AAAAAA',
   warning: '#FFA500',
   info: '#17A2B8',
+  completed: '#4CAF50',
 };
 
 const DAYS = ['LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO', 'DOMINGO'];
 const MEALS = ['Desayuno', 'Colación 1', 'Almuerzo', 'Colación 2', 'Cena'];
 const CALORIE_GOAL = 2000;
 const POINTS_GOAL = 20;
+
+const normalizeMealType = (value: string) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const UI_TO_DB_MEAL_TYPE: Record<string, 'desayuno' | 'almuerzo' | 'comida' | 'cena' | 'snack'> = {
+  desayuno: 'desayuno',
+  almuerzo: 'almuerzo',
+  comida: 'comida',
+  cena: 'cena',
+  snack: 'snack',
+  'colacion 1': 'snack',
+  'colacion 2': 'snack',
+};
+
+const DB_TO_UI_MEALS = (dbMealType: string): string[] => {
+  const key = normalizeMealType(dbMealType);
+  if (key === 'desayuno') return ['Desayuno'];
+  if (key === 'almuerzo' || key === 'comida') return ['Almuerzo'];
+  if (key === 'cena') return ['Cena'];
+  if (key === 'snack') return ['Colación 1', 'Colación 2'];
+  return [];
+};
 
 export default function FoodTrackingScreen({ navigation }: any) {
   const { user, updatePoints } = useUser();
@@ -65,10 +94,12 @@ export default function FoodTrackingScreen({ navigation }: any) {
   const [todayHistory, setTodayHistory] = useState<any[]>([]);
   const [dietaRecomendada, setDietaRecomendada] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [userLoaded, setUserLoaded] = useState(false);
   const [totalPoints, setTotalPoints] = useState(0);
   const [isRegistering, setIsRegistering] = useState(false);
   const [todayDayIndex, setTodayDayIndex] = useState(0);
+  const [registeredMealsToday, setRegisteredMealsToday] = useState<Set<string>>(new Set());
 
   // Loading animation values
   const spinValue = useRef(new Animated.Value(0)).current;
@@ -79,17 +110,18 @@ export default function FoodTrackingScreen({ navigation }: any) {
   // Refrescar cuando la pantalla gana foco
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      console.log('🔄 FoodTracking enfocada - refrescando nutriólogo');
+      console.log('🔄 FoodTracking enfocada - refrescando');
       refreshNutriologo();
+      loadData();
     });
     return unsubscribe;
   }, [navigation]);
 
-  // Detectar día actual al cargar y al regresar
+  // Detectar día actual
   useEffect(() => {
     const updateToday = () => {
       const today = new Date();
-      const dayIndex = today.getDay(); // 0 = domingo, 1 = lunes, ...
+      const dayIndex = today.getDay(); // 0=domingo, 1=lunes...
       const adjustedIndex = dayIndex === 0 ? 6 : dayIndex - 1;
       setTodayDayIndex(adjustedIndex);
       const dayName = DAYS[adjustedIndex];
@@ -110,90 +142,55 @@ export default function FoodTrackingScreen({ navigation }: any) {
 
   const loadTotalPoints = async () => {
     if (!user?.id_paciente) return;
-
     try {
       const { data, error } = await supabase
         .from('puntos_paciente')
         .select('puntos_totales')
         .eq('id_paciente', user.id_paciente)
         .single();
-
       if (error) throw error;
       setTotalPoints(data?.puntos_totales || 0);
     } catch (err) {
-      console.error('Error cargando puntos totales:', err);
+      console.error('Error cargando puntos:', err);
     }
   };
 
   // Loading animation
   useEffect(() => {
     if (loading || nutriologoLoading) {
-      Animated.loop(
-        Animated.timing(spinValue, {
-          toValue: 1,
-          duration: 2000,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
-      ).start();
-
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(leafScale, { toValue: 1.2, duration: 1000, useNativeDriver: true }),
-          Animated.timing(leafScale, { toValue: 1, duration: 1000, useNativeDriver: true }),
-        ])
-      ).start();
-
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(leafOpacity, { toValue: 1, duration: 1000, useNativeDriver: true }),
-          Animated.timing(leafOpacity, { toValue: 0.5, duration: 1000, useNativeDriver: true }),
-        ])
-      ).start();
-
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(loadingTextOpacity, { toValue: 1, duration: 1000, useNativeDriver: true }),
-          Animated.timing(loadingTextOpacity, { toValue: 0.3, duration: 1000, useNativeDriver: true }),
-        ])
-      ).start();
+      Animated.loop(Animated.timing(spinValue, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: true })).start();
+      Animated.loop(Animated.sequence([Animated.timing(leafScale, { toValue: 1.2, duration: 1000, useNativeDriver: true }), Animated.timing(leafScale, { toValue: 1, duration: 1000, useNativeDriver: true })])).start();
+      Animated.loop(Animated.sequence([Animated.timing(leafOpacity, { toValue: 1, duration: 1000, useNativeDriver: true }), Animated.timing(leafOpacity, { toValue: 0.5, duration: 1000, useNativeDriver: true })])).start();
+      Animated.loop(Animated.sequence([Animated.timing(loadingTextOpacity, { toValue: 1, duration: 1000, useNativeDriver: true }), Animated.timing(loadingTextOpacity, { toValue: 0.3, duration: 1000, useNativeDriver: true })])).start();
     }
   }, [loading, nutriologoLoading]);
 
   const handleDayChange = (day: string) => {
-    if (day === selectedDay) return;
-    
-    const dayIndex = DAYS.indexOf(day);
-    
-    // Bloquear días pasados
-    if (dayIndex < todayDayIndex) {
-      Alert.alert(
-        'Día no disponible',
-        'No puedes registrar alimentos en días pasados. Solo puedes registrar para hoy y días futuros.',
-        [{ text: 'Entendido' }]
-      );
-      return;
-    }
-    
     setSelectedDay(day);
   };
 
-  useEffect(() => {
-    if (!userLoaded || !user?.id_paciente) {
-      setLoading(true);
-      return;
-    }
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  };
 
-    const loadData = async () => {
-      setLoading(true);
+  const loadData = async () => {
+    if (!user?.id_paciente) return;
 
+    setLoading(true);
+    setRegisteredMealsToday(new Set());
+
+    try {
       // Alimentos disponibles
       const { data: foodData } = await foodService.getAvailableFoods();
       setFoods(foodData || []);
 
-      // Historial del día actual
+      // Historial SOLO de hoy
       const today = new Date().toISOString().split('T')[0];
-      const { data: historyData } = await foodService.getFoodHistory(user.id_paciente, today, today);
+      const { data: historyData, error: histError } = await foodService.getFoodHistory(user.id_paciente, today, today);
+      if (histError) throw histError;
+
       const mapped = (historyData || []).map((item: any) => ({
         id: item.id_registro,
         food: {
@@ -206,26 +203,34 @@ export default function FoodTrackingScreen({ navigation }: any) {
         grams: item.cantidad,
         kcal: item.calorias_totales,
         points: item.puntos_obtenidos || 0,
+        mealType: item.tipo_comida?.trim(), // Guardamos tal cual viene (con acentos y mayúsculas)
       }));
       setTodayHistory(mapped);
 
-      // SOLO cargar dieta recomendada si TIENE NUTRIÓLOGO Y TIENE DIETA
+      // Marcar comidas registradas HOY usando etiquetas de UI
+      const completedToday = new Set<string>();
+      mapped.forEach((item: any) => {
+        DB_TO_UI_MEALS(item.mealType).forEach((mealLabel) => completedToday.add(mealLabel));
+      });
+      setRegisteredMealsToday(completedToday);
+
+      // Cargar dieta recomendada para el día seleccionado
       if (estadoNutriologo === 'asignado_con_dieta') {
-        const diaMap = {
-          LUNES: 1, MARTES: 2, MIÉRCOLES: 3, JUEVES: 4,
-          VIERNES: 5, SÁBADO: 6, DOMINGO: 7,
+        const diaMap: Record<(typeof DAYS)[number], number> = {
+          LUNES: 1,
+          MARTES: 2,
+          MIÉRCOLES: 3,
+          JUEVES: 4,
+          VIERNES: 5,
+          SÁBADO: 6,
+          DOMINGO: 7,
         };
         const diaNumero = diaMap[selectedDay] || 1;
 
-        const { data: dietaData } = await supabase
+        const { data: dietaData, error: dietaError } = await supabase
           .from('dieta_detalle')
           .select(`
-            tipo_comida,
-            descripcion,
-            categoria,
-            porcion_sugerida,
-            calorias_por_100g,
-            horario,
+            *,
             dietas!inner(id_paciente)
           `)
           .eq('dietas.id_paciente', user.id_paciente)
@@ -233,21 +238,77 @@ export default function FoodTrackingScreen({ navigation }: any) {
           .in('tipo_comida', MEALS)
           .order('orden', { ascending: true });
 
-        setDietaRecomendada(dietaData || []);
+        if (dietaError) throw dietaError;
+
+        const normalizeText = (value: any) =>
+          String(value || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const alimentosPorDescripcion = new Map<string, any>();
+        const alimentosPorNombre = new Map<string, any>();
+        const catalogoNormalizado = (foodData || []).map((alimento: any) => ({
+          alimento,
+          nombreNorm: normalizeText(alimento?.nombre),
+        }));
+
+        (foodData || []).forEach((alimento: any) => {
+          const keyDescripcion = normalizeText(alimento?.descripcion);
+          const keyNombre = normalizeText(alimento?.nombre);
+
+          if (keyDescripcion) alimentosPorDescripcion.set(keyDescripcion, alimento);
+          if (keyNombre) alimentosPorNombre.set(keyNombre, alimento);
+        });
+
+        const dietaEnriquecida = (dietaData || []).map((item: any) => {
+          const platilloAsignado = String(item?.descripcion || '').trim();
+          const keyDescripcionDetalle = normalizeText(item?.descripcion);
+          let matchedFood =
+            alimentosPorDescripcion.get(keyDescripcionDetalle) ||
+            alimentosPorNombre.get(keyDescripcionDetalle) ||
+            null;
+
+          if (!matchedFood && keyDescripcionDetalle) {
+            const candidates = catalogoNormalizado
+              .filter((entry: any) => entry.nombreNorm && entry.nombreNorm.length >= 3)
+              .filter((entry: any) => keyDescripcionDetalle.includes(entry.nombreNorm))
+              .sort((a: any, b: any) => b.nombreNorm.length - a.nombreNorm.length);
+
+            matchedFood = candidates[0]?.alimento || null;
+          }
+
+          return {
+            ...item,
+            platillo_asignado: platilloAsignado || matchedFood?.nombre || 'Alimento asignado',
+            id_alimento_resuelto: matchedFood?.id_alimento || null,
+            nombre_alimento_resuelto: matchedFood?.nombre || null,
+          };
+        });
+
+        setDietaRecomendada(dietaEnriquecida);
       } else {
         setDietaRecomendada([]);
       }
-      
+    } catch (err) {
+      console.error('Error cargando datos:', err);
+      Alert.alert('Error', 'No se pudieron cargar los datos. Intenta refrescar.');
+    } finally {
       setLoading(false);
-    };
+    }
+  };
 
-    loadData();
+  useEffect(() => {
+    if (userLoaded && user?.id_paciente) {
+      loadData();
+    }
   }, [userLoaded, user?.id_paciente, selectedDay, estadoNutriologo]);
 
   const stats = useMemo(() => {
     const totalKcal = todayHistory.reduce((acc, curr) => acc + (curr.kcal || 0), 0);
     const totalPoints = todayHistory.reduce((acc, curr) => acc + (curr.points || 0), 0);
-
     return {
       totalKcal,
       kcalProgress: (totalKcal / CALORIE_GOAL) * 100,
@@ -274,6 +335,14 @@ export default function FoodTrackingScreen({ navigation }: any) {
       return;
     }
 
+    // Bloqueo fuerte: si ya está registrada, no proceder
+    if (registeredMealsToday.has(selectedFood.type)) {
+      Alert.alert('Ya completado', 'Esta comida ya fue registrada hoy.');
+      setSelectedFood(null);
+      setAmount('');
+      return;
+    }
+
     const qty = parseInt(amount);
     if (!qty || qty <= 0) {
       Alert.alert('Atención', 'Ingresa una cantidad válida.');
@@ -288,62 +357,97 @@ export default function FoodTrackingScreen({ navigation }: any) {
       const pointsEarned = Math.round((qty / maxQty) * (selectedFood.pts || 3));
       const pointsFinal = Math.max(1, Math.min(pointsEarned, selectedFood.pts || 3));
 
+      // Mapear tipo de comida UI -> valores permitidos en BD (check constraint)
+      const mealTypeRaw = String(selectedFood.type || '').trim();
+      const mealTypeNormalized = UI_TO_DB_MEAL_TYPE[normalizeMealType(mealTypeRaw)];
+
+      if (!mealTypeNormalized) {
+        Alert.alert('Error de validación', 'El tipo de comida no coincide con los permitidos.');
+        return;
+      }
+
+      console.log('Enviando tipo_comida:', mealTypeNormalized); // ← Para depurar
+
       const payload = {
         id_alimento: selectedFood.id_alimento || null,
+        alimento_personalizado: selectedFood.platillo || selectedFood.name || null,
         cantidad: qty,
         unidad: selectedFood.unit || 'g',
         calorias_totales: kcalTotal,
         fecha: new Date().toISOString().split('T')[0],
+        tipo_comida: mealTypeNormalized,
       };
 
       const { error } = await foodService.registerFood(user.id_paciente, payload);
 
       if (error) {
-        Alert.alert('Error', 'No se pudo registrar: ' + (error.message || 'Desconocido'));
-        setIsRegistering(false);
+        console.error('Error Supabase:', error);
+        if (error.code === '23514') {
+          Alert.alert('Error de validación', 'El tipo de comida no coincide con los permitidos. Contacta soporte o verifica la dieta.');
+        } else if (error.code === '23505') {
+          Alert.alert('Ya registrado', 'Esta comida ya fue completada hoy en la base de datos.');
+        } else {
+          Alert.alert('Error', 'No se pudo registrar: ' + (error.message || 'Desconocido'));
+        }
       } else {
         await updatePoints(pointsFinal);
         Alert.alert('Éxito', `¡${qty} ${selectedFood.unit || 'g'} registrados! +${pointsFinal} pts`);
 
-        // Refrescar historial y puntos
-        const today = new Date().toISOString().split('T')[0];
-        const { data: newHistory } = await foodService.getFoodHistory(user.id_paciente, today, today);
-        const mapped = (newHistory || []).map((item: any) => ({
-          id: item.id_registro,
-          food: {
-            id: item.id_alimento || `custom-${item.id_registro}`,
-            name: item.alimento_personalizado || (item.alimentos?.nombre || 'Personalizado'),
-            unit: item.unidad || 'g',
-            kcalPerUnit: item.alimentos?.calorias_por_100g ? item.alimentos.calorias_por_100g / 100 : 0,
-            pts: item.puntos_obtenidos || 0,
-          },
-          grams: item.cantidad,
-          kcal: item.calorias_totales,
-          points: item.puntos_obtenidos || 0,
-        }));
-        setTodayHistory(mapped);
-        loadTotalPoints();
+        // Bloqueo inmediato + refresco
+        setRegisteredMealsToday(prev => new Set([...prev, mealTypeRaw]));
+        await loadData();
 
         setSelectedFood(null);
         setAmount('');
-        setIsRegistering(false);
       }
     } catch (error) {
       console.error('Error al registrar:', error);
       Alert.alert('Error', 'Ocurrió un error al registrar el alimento.');
+    } finally {
       setIsRegistering(false);
     }
   };
 
   const hasAnyDiet = useMemo(() => dietaRecomendada.length > 0, [dietaRecomendada]);
 
+  const getAssignedFoodName = (item: any) => {
+    const platillo = String(item?.platillo_asignado || item?.descripcion || '').trim();
+    if (platillo) return platillo;
+
+    const explicitName =
+      item?.nombre_alimento_resuelto ||
+      item?.alimentos?.nombre_alimento ||
+      item?.alimentos?.nombre ||
+      item?.nombre_alimento ||
+      item?.nombre ||
+      item?.alimento ||
+      item?.titulo;
+
+    if (explicitName) return explicitName;
+
+    const description = String(item?.descripcion || '').trim();
+    if (!description) return 'Alimento asignado';
+
+    const separators = [' - ', ' — ', ': ', ' | '];
+    for (const separator of separators) {
+      if (description.includes(separator)) {
+        const [possibleName] = description.split(separator);
+        if (possibleName?.trim()) return possibleName.trim();
+      }
+    }
+
+    return description;
+  };
+
+
   const getDayStyle = (day: string) => {
     const dayIndex = DAYS.indexOf(day);
     const isSelected = selectedDay === day;
     const isToday = dayIndex === todayDayIndex;
     const isPast = dayIndex < todayDayIndex;
+    const shouldBlockPastDays = estadoNutriologo === 'asignado_con_dieta';
 
-    if (isPast) {
+    if (isPast && shouldBlockPastDays) {
       return {
         chip: { 
           ...styles.dayChip, 
@@ -354,7 +458,7 @@ export default function FoodTrackingScreen({ navigation }: any) {
         text: { 
           ...styles.dayText, 
           color: COLORS.blockedText, 
-          fontWeight: '500' 
+          fontWeight: '500' as const,
         },
         isBlocked: true,
       };
@@ -370,7 +474,7 @@ export default function FoodTrackingScreen({ navigation }: any) {
         text: { 
           ...styles.dayText, 
           color: COLORS.white, 
-          fontWeight: '900' 
+          fontWeight: '900' as const,
         },
         isBlocked: false,
       };
@@ -386,7 +490,7 @@ export default function FoodTrackingScreen({ navigation }: any) {
         text: { 
           ...styles.dayText, 
           color: COLORS.activeDayText, 
-          fontWeight: '800' 
+          fontWeight: '800' as const,
         },
         isBlocked: false,
       };
@@ -401,28 +505,15 @@ export default function FoodTrackingScreen({ navigation }: any) {
       text: { 
         ...styles.dayText, 
         color: COLORS.textLight, 
-        fontWeight: '600' 
+        fontWeight: '600' as const,
       },
       isBlocked: false,
     };
   };
 
-  const isSelectedDayPast = DAYS.indexOf(selectedDay) < todayDayIndex;
+  const isToday = DAYS.indexOf(selectedDay) === todayDayIndex;
 
   const renderContentByNutriologoState = () => {
-    if (isSelectedDayPast) {
-      return (
-        <View style={styles.blockedDayContainer}>
-          <Ionicons name="lock-closed" size={50} color={COLORS.disabled} />
-          <Text style={styles.blockedDayTitle}>Día no disponible</Text>
-          <Text style={styles.blockedDayText}>
-            No puedes registrar alimentos en días pasados.
-            Solo puedes registrar para hoy y días futuros.
-          </Text>
-        </View>
-      );
-    }
-
     switch (estadoNutriologo) {
       case 'sin_asignar':
         return (
@@ -430,11 +521,11 @@ export default function FoodTrackingScreen({ navigation }: any) {
             <Ionicons name="person-outline" size={60} color={COLORS.primary} style={styles.noDietIcon} />
             <Text style={styles.noDietTitle}>Sin Nutriólogo Asignado</Text>
             <Text style={styles.noDietText}>
-              No tienes un nutriólogo asignado. Agenda una consulta para obtener un plan personalizado.
+              Agenda una consulta para obtener tu plan personalizado.
             </Text>
             <TouchableOpacity 
               style={styles.noDietButton}
-              onPress={() => navigation.navigate('Schedule', { view: 'agendar' })} // ← CAMBIADO
+              onPress={() => navigation.navigate('Schedule', { view: 'agendar' })}
             >
               <Text style={styles.noDietButtonText}>Agendar consulta</Text>
             </TouchableOpacity>
@@ -445,14 +536,9 @@ export default function FoodTrackingScreen({ navigation }: any) {
         return (
           <View style={[styles.noDietContainer, { backgroundColor: '#FFF3CD' }]}>
             <Ionicons name="time-outline" size={60} color="#FFA500" style={styles.noDietIcon} />
-            <Text style={[styles.noDietTitle, { color: '#FFA500' }]}>Esperando asignación</Text>
+            <Text style={[styles.noDietTitle, { color: '#FFA500' }]}>Esperando dieta</Text>
             <Text style={styles.noDietText}>
-              {nutriologo 
-                ? `Tu nutriólogo ${nutriologo.nombre} ${nutriologo.apellido} aún no ha asignado tu plan alimenticio.`
-                : 'Tu nutriólogo aún no ha asignado tu plan alimenticio.'}
-            </Text>
-            <Text style={[styles.noDietText, { marginTop: 5, fontWeight: '600' }]}>
-              Espera a que tu nutriólogo asigne tu dieta personalizada.
+              Tu nutriólogo aún no ha asignado tu plan.
             </Text>
           </View>
         );
@@ -462,10 +548,9 @@ export default function FoodTrackingScreen({ navigation }: any) {
           return (
             <View style={styles.noDietContainer}>
               <Ionicons name="restaurant-outline" size={60} color={COLORS.primary} style={styles.noDietIcon} />
-              <Text style={styles.noDietTitle}>Sin dieta para este día</Text>
+              <Text style={styles.noDietTitle}>Sin dieta</Text>
               <Text style={styles.noDietText}>
-                No hay alimentos asignados para {selectedDay}. 
-                Tu nutriólogo asignará tu plan semanal completo.
+                No hay alimentos asignados.
               </Text>
             </View>
           );
@@ -475,32 +560,53 @@ export default function FoodTrackingScreen({ navigation }: any) {
           const items = dietaRecomendada.filter((d) => d.tipo_comida === meal);
           if (items.length === 0) return null;
 
+          const isRegistered = registeredMealsToday.has(meal);
+
           return (
             <View key={meal} style={styles.mealSection}>
-              <Text style={styles.mealTitle}>{meal.toUpperCase()}</Text>
+              <Text style={[
+                styles.mealTitle,
+                isRegistered && isToday && { color: COLORS.completed, fontWeight: '900' }
+              ]}>
+                {meal.toUpperCase()}
+                {isRegistered && isToday && ' ✓ Completado'}
+              </Text>
               {items.map((item, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.foodItem, isRegistering && styles.disabledItem]}
+                  style={[
+                    styles.foodItem,
+                    (isRegistered && isToday) && styles.disabledItem
+                  ]}
                   onPress={() => {
-                    if (!isRegistering) {
-                      setSelectedFood({
-                        id_alimento: null,
-                        name: item.descripcion,
-                        max: 100,
-                        unit: item.porcion_sugerida?.includes('g') ? 'g' : 'unidad',
-                        kcalPerUnit: item.calorias_por_100g ? item.calorias_por_100g / 100 : 1,
-                        pts: 3,
-                        horario: item.horario || null,
-                      });
-                      setAmount('100');
+                    if (!isToday) {
+                      Alert.alert('Solo hoy', 'Solo puedes registrar alimentos para el día de hoy.');
+                      return;
                     }
+                    if (isRegistered) {
+                      Alert.alert('Ya completado', 'Esta comida ya fue registrada hoy. No puedes agregar más.');
+                      return;
+                    }
+                    if (isRegistering) return;
+
+                    setSelectedFood({
+                      id_alimento: item.id_alimento || item.id_alimento_resuelto || null,
+                      name: getAssignedFoodName(item),
+                      platillo: String(item?.platillo_asignado || item?.descripcion || '').trim() || null,
+                      max: 100,
+                      unit: item.porcion_sugerida?.includes('g') ? 'g' : 'unidad',
+                      kcalPerUnit: item.calorias_por_100g ? item.calorias_por_100g / 100 : 1,
+                      pts: 3,
+                      horario: item.horario || null,
+                      type: meal, // ← Valor original, con acentos y mayúsculas
+                    });
+                    setAmount('100');
                   }}
-                  disabled={isRegistering}
+                  disabled={isRegistering || (isRegistered && isToday)}
                 >
                   <View style={styles.foodContent}>
                     <View style={styles.foodInfo}>
-                      <Text style={styles.foodName}>{item.descripcion}</Text>
+                      <Text style={styles.foodName}>{getAssignedFoodName(item)}</Text>
                       <View style={styles.infoRow}>
                         <Text style={styles.foodDesc}>
                           Cal: ~{item.calorias_por_100g ? Math.round(item.calorias_por_100g) : '?'} kcal/100g
@@ -612,15 +718,18 @@ export default function FoodTrackingScreen({ navigation }: any) {
       {viewMode === 'registro' && (
         <View style={{ flex: 1 }}>
           <View style={styles.daysBarWrapper}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.daysBarContent}>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false} 
+              contentContainerStyle={styles.daysBarContent}
+            >
               {DAYS.map((day) => {
-                const { chip, text, isBlocked } = getDayStyle(day);
+                const { chip, text } = getDayStyle(day);
                 return (
                   <TouchableOpacity
                     key={day}
                     onPress={() => handleDayChange(day)}
                     style={chip}
-                    disabled={isBlocked}
                   >
                     <Text style={text}>
                       {day.substring(0, 3)}
@@ -631,12 +740,22 @@ export default function FoodTrackingScreen({ navigation }: any) {
             </ScrollView>
           </View>
 
-          <ScrollView style={styles.planContainer} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={styles.planContainer}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[COLORS.primary]}
+                tintColor={COLORS.primary}
+                title="Actualizando plan..."
+                titleColor={COLORS.primary}
+              />
+            }
+          >
             <Text style={styles.dayTitle}>{selectedDay}</Text>
 
-            
-
-            {/* Contenido principal según estado */}
             {renderContentByNutriologoState()}
           </ScrollView>
         </View>
@@ -645,7 +764,19 @@ export default function FoodTrackingScreen({ navigation }: any) {
       {/* Historial */}
       {viewMode === 'historial' && (
         <View style={{ flex: 1 }}>
-          <ScrollView style={styles.planContainer}>
+          <ScrollView
+            style={styles.planContainer}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[COLORS.primary]}
+                tintColor={COLORS.primary}
+                title="Actualizando historial..."
+                titleColor={COLORS.primary}
+              />
+            }
+          >
             <Text style={styles.dayTitle}>Historial de Hoy</Text>
             {todayHistory.length > 0 ? (
               todayHistory.map((item) => (
@@ -683,7 +814,19 @@ export default function FoodTrackingScreen({ navigation }: any) {
       {/* Progreso */}
       {viewMode === 'progreso' && (
         <View style={{ flex: 1 }}>
-          <ScrollView style={styles.planContainer}>
+          <ScrollView
+            style={styles.planContainer}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[COLORS.primary]}
+                tintColor={COLORS.primary}
+                title="Actualizando progreso..."
+                titleColor={COLORS.primary}
+              />
+            }
+          >
             <Text style={styles.dayTitle}>Progreso del Día</Text>
 
             <View style={styles.progressSection}>
@@ -774,26 +917,55 @@ export default function FoodTrackingScreen({ navigation }: any) {
               <Text style={styles.sheetLimit}>
                 Cantidad (máx sugerido: {selectedFood?.max || 999})
               </Text>
+
+              {/* Indicador fuerte si ya está registrada */}
+              {registeredMealsToday.has(selectedFood?.type) && (
+                <View style={{ 
+                  flexDirection: 'row', 
+                  alignItems: 'center', 
+                  backgroundColor: COLORS.completed + '20',
+                  padding: 12,
+                  borderRadius: 12,
+                  marginVertical: 12,
+                  borderWidth: 1,
+                  borderColor: COLORS.completed
+                }}>
+                  <Ionicons name="checkmark-circle" size={28} color={COLORS.completed} />
+                  <Text style={{ 
+                    color: COLORS.completed, 
+                    fontWeight: '900', 
+                    marginLeft: 12,
+                    fontSize: 16
+                  }}>
+                    COMIDA YA COMPLETADA HOY
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.inputArea}>
                 <TextInput
-                  style={styles.inputMassive}
+                  style={[
+                    styles.inputMassive,
+                    registeredMealsToday.has(selectedFood?.type) && { color: COLORS.disabled }
+                  ]}
                   keyboardType="numeric"
                   value={amount}
                   onChangeText={handleAmountChange}
                   placeholder="0"
                   autoFocus
-                  editable={!isRegistering}
+                  editable={!isRegistering && !registeredMealsToday.has(selectedFood?.type)}
                 />
                 <Text style={styles.unitSmall}>
                   {selectedFood?.unit?.toUpperCase() || 'G'}
                 </Text>
               </View>
+
               <TouchableOpacity
                 style={[
-                  styles.btnConfirm, 
-                  (!amount || isRegistering) && { backgroundColor: COLORS.border }
+                  styles.btnConfirm,
+                  (!amount || isRegistering || registeredMealsToday.has(selectedFood?.type)) && { backgroundColor: COLORS.border }
                 ]}
-                disabled={!amount || isRegistering}
+                disabled={!amount || isRegistering || registeredMealsToday.has(selectedFood?.type)}
                 onPress={confirmRegister}
               >
                 {isRegistering ? (
@@ -802,6 +974,7 @@ export default function FoodTrackingScreen({ navigation }: any) {
                   <Text style={styles.btnText}>CONFIRMAR REGISTRO</Text>
                 )}
               </TouchableOpacity>
+
               <TouchableOpacity
                 onPress={() => {
                   if (!isRegistering) {
@@ -926,7 +1099,8 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   disabledItem: {
-    opacity: 0.5,
+    backgroundColor: COLORS.disabled,
+    opacity: 0.7,
   },
   foodContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   foodInfo: { flex: 1 },
@@ -1181,41 +1355,27 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Estilos para tarjeta de estado del nutriólogo
-  nutriologoStatusCard: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-  },
-  nutriologoStatusHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  nutriologoStatusTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    marginLeft: 10,
-  },
-  nutriologoStatusText: {
-    fontSize: 14,
-    color: COLORS.textDark,
-    lineHeight: 20,
-    marginBottom: 15,
-  },
-  nutriologoStatusButton: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.primary,
-    padding: 12,
-    borderRadius: 10,
+  infoContainer: {
+    backgroundColor: COLORS.white,
+    padding: 40,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 20,
+    elevation: 2,
   },
-  nutriologoStatusButtonText: {
-    color: COLORS.white,
-    fontWeight: '700',
+  infoTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: COLORS.primary,
+    marginTop: 15,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  infoText: {
     fontSize: 14,
-    marginRight: 8,
+    color: COLORS.textLight,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

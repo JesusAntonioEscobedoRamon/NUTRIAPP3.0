@@ -43,39 +43,40 @@ export default function ResetPasswordScreen() {
 
   const handleDeepLink = async (url: string) => {
     try {
-      // Parsear el URL (nutriu://reset-password?token=abc&type=recovery)
-      const parsed = Linking.parse(url);
-      console.log('URL parseado:', parsed);
+      // Supabase envía el token en el fragmento (#...)
+      const parsedUrl = new URL(url);
+      const fragment = parsedUrl.hash.substring(1); // quita el #
+      const params = new URLSearchParams(fragment);
 
-      // Supabase envía el access_token en el query param "token" o directamente en el fragmento
-      const token = parsed.queryParams?.token || parsed.queryParams?.access_token;
+      const accessToken = params.get('access_token');
+      const type = params.get('type');
+      const expiresIn = params.get('expires_in');
 
-      if (!token) {
-        console.warn('No se encontró token de recuperación en el deep link');
+      console.log('Parámetros del fragmento:', { accessToken, type, expiresIn });
+
+      if (!accessToken || type !== 'recovery') {
+        console.warn('Enlace inválido o no es de recuperación');
         setMessage('Enlace inválido o expirado. Solicita un nuevo restablecimiento.');
         return;
       }
 
-      console.log('Token de recuperación encontrado:', token);
+      // Activar la sesión de recuperación con el access_token
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: '', // No se necesita refresh para recovery
+      });
 
-      // Intentar recuperar la sesión con el token
-      const { data, error } = await supabase.auth.getSession();
-
-      if (error || !data.session) {
-        // Si no hay sesión, intentar refrescar con el token (Supabase lo maneja internamente)
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-
-        if (refreshError || !refreshData.session) {
-          console.error('Error al recuperar sesión de recuperación:', refreshError);
-          setMessage('El enlace ha expirado o es inválido. Solicita uno nuevo.');
-          return;
-        }
-
-        console.log('Sesión recuperada exitosamente:', refreshData.session);
+      if (error) {
+        console.error('Error al activar sesión de recuperación:', error);
+        setMessage('El enlace ha expirado o es inválido. Solicita uno nuevo.');
+        return;
       }
 
+      console.log('Sesión de recuperación activada:', data.session);
+
       setSessionReady(true);
-      setMessage('¡Sesión de recuperación activa! Ahora puedes cambiar tu contraseña.');
+      setMessage('¡Enlace válido! Ahora puedes cambiar tu contraseña.');
+      Alert.alert('Listo', 'Puedes ingresar tu nueva contraseña ahora.');
     } catch (err: any) {
       console.error('Error al manejar deep link:', err);
       setMessage('Error al procesar el enlace. Intenta de nuevo o solicita otro restablecimiento.');
@@ -106,10 +107,7 @@ export default function ResetPasswordScreen() {
         password,
       });
 
-      if (error) {
-        console.error('Error al actualizar contraseña:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       console.log('Contraseña actualizada exitosamente:', data.user);
 
@@ -117,9 +115,8 @@ export default function ResetPasswordScreen() {
       Alert.alert('Éxito', 'Tu contraseña ha sido actualizada. Ahora inicia sesión.', [
         {
           text: 'Ir a Login',
-          onPress: () => {
-            // Cerrar sesión parcial de recuperación y redirigir
-            supabase.auth.signOut();
+          onPress: async () => {
+            await supabase.auth.signOut(); // Cierra cualquier sesión parcial
             navigation.navigate('Login');
           },
         },

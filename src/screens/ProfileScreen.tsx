@@ -70,10 +70,10 @@ const InfoRow = React.memo(({
   // Formatear el valor mostrado
   const displayValue = (() => {
     if (!value) return 'No registrado';
-    if (label === 'Peso' && !value.includes('kg')) {
+    if (label === 'Peso' && !value.includes('kg') && !isNaN(Number(value))) {
       return `${value} kg`;
     }
-    if (label === 'Altura' && !value.includes('cm')) {
+    if (label === 'Altura' && !value.includes('cm') && !isNaN(Number(value))) {
       return `${value} cm`;
     }
     return value;
@@ -94,7 +94,10 @@ const InfoRow = React.memo(({
       </View>
       {editable && isEditing ? (
         <TextInput
-          style={styles.input}
+          style={[
+            styles.input,
+            label === 'Correo electrónico' && styles.inputEmail // Estilo especial para correo
+          ]}
           value={currentValue}
           onChangeText={handleChangeText}
           keyboardType={keyboardType || (isNumeric ? 'numeric' : 'default')}
@@ -106,7 +109,16 @@ const InfoRow = React.memo(({
           blurOnSubmit={true}
         />
       ) : (
-        <Text style={styles.rowValue}>{currentValue}</Text>
+        <Text 
+          style={[
+            styles.rowValue,
+            label === 'Correo electrónico' && styles.rowValueEmail // Estilo especial para correo
+          ]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {currentValue}
+        </Text>
       )}
     </View>
   );
@@ -483,7 +495,7 @@ export default function ProfileScreen({ navigation }: any) {
               label="Nombre de usuario" 
               icon="at-outline" 
               value={user.nombre_usuario} 
-              editable={true} // Solo este campo es editable
+              editable={true}
               isEditing={isEditing}
               editedUser={editedUser}
               setEditedUser={setEditedUser}
@@ -492,7 +504,7 @@ export default function ProfileScreen({ navigation }: any) {
               multiline={false}
             />
 
-            {/* TODOS LOS DEMÁS CAMPOS SON SOLO VISUALIZACIÓN */}
+            {/* CORREO ELECTRÓNICO - AHORA CON ESTILO ESPECIAL */}
             <InfoRow 
               label="Correo electrónico" 
               icon="mail-outline" 
@@ -512,7 +524,7 @@ export default function ProfileScreen({ navigation }: any) {
             <InfoRow 
               label="Peso" 
               icon="speedometer-outline" 
-              value={user.peso ? `${user.peso} kg` : 'No registrado'} 
+              value={user.peso ? `${user.peso} kg` : 'Sin asignar'} 
               editable={false}
               isEditing={isEditing}
             />
@@ -520,7 +532,7 @@ export default function ProfileScreen({ navigation }: any) {
             <InfoRow 
               label="Altura" 
               icon="resize-outline" 
-              value={user.altura ? `${user.altura} cm` : 'No registrado'} 
+              value={user.altura ? `${user.altura} cm` : 'Sin asignar'} 
               editable={false}
               isEditing={isEditing}
             />
@@ -583,7 +595,7 @@ export default function ProfileScreen({ navigation }: any) {
   );
 }
 
-// ============ ESTILOS ============
+// ============ ESTILOS CORREGIDOS ============
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
   loadingContainer: { 
@@ -639,15 +651,15 @@ const styles = StyleSheet.create({
   retryText: { color: COLORS.white, fontWeight: 'bold' },
   
   header: {
-    height: 80,
     backgroundColor: COLORS.white,
     flexDirection: 'row', 
     alignItems: 'center',
     justifyContent: 'space-between', 
     paddingHorizontal: 15,
+    paddingTop: 50,
+    paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    paddingTop: 10,
   },
   backButton: {
     padding: 5,
@@ -761,6 +773,8 @@ const styles = StyleSheet.create({
     marginTop: 20
   },
   saveButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14 },
+  
+  // ESTILOS CORREGIDOS PARA LAS FILAS
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -768,15 +782,48 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.secondary,
+    flexWrap: 'wrap', // Permite que los elementos se envuelvan si es necesario
   },
   rowEditing: {
     backgroundColor: COLORS.secondary + '80',
     borderRadius: 10,
     paddingVertical: 4
   },
-  rowLeft: { flexDirection: 'row', alignItems: 'center' },
-  rowLabel: { marginLeft: 12, fontSize: 14, fontWeight: '600', color: COLORS.textLight },
-  rowValue: { fontSize: 14, fontWeight: '800', color: COLORS.textDark },
+  rowLeft: { 
+    flexDirection: 'row', 
+    alignItems: 'center',
+    flex: 1, // Ocupa el espacio necesario
+    marginRight: 10, // Espacio entre el label y el valor
+  },
+  rowLabel: { 
+    marginLeft: 12, 
+    fontSize: 14, 
+    fontWeight: '600', 
+    color: COLORS.textLight,
+    flexShrink: 1, // Permite que el texto se encoja si es necesario
+  },
+  
+  // ESTILOS CORREGIDOS PARA EL VALOR (especialmente para correo)
+  rowValue: { 
+    fontSize: 14, 
+    fontWeight: '800', 
+    color: COLORS.textDark,
+    textAlign: 'right',
+    maxWidth: '55%', // Límite de ancho
+    flexShrink: 1, // Permite que se encoja
+  },
+  
+  // ESTILO ESPECIAL PARA CORREO ELECTRÓNICO
+  rowValueEmail: {
+    maxWidth: '60%', // Un poco más de ancho para correos largos
+    fontSize: 13, // Fuente ligeramente más pequeña para correos largos
+  },
+  
+  // ESTILO ESPECIAL PARA INPUT DE CORREO
+  inputEmail: {
+    width: '60%', // Más ancho para correos
+  },
+  
   input: {
     backgroundColor: COLORS.white,
     paddingHorizontal: 12,

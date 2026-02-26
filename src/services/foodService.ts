@@ -3,10 +3,13 @@ import { supabase } from '../lib/supabase';
 export const foodService = {
   // Registrar alimento consumido
   registerFood: async (userId: number, foodData: {
-    id_alimento: number;
-    porciones: number;
+    id_alimento?: number | null;
+    alimento_personalizado?: string | null;
+    cantidad: number;
+    unidad?: string;
     calorias_totales: number;
     fecha: string;
+    tipo_comida?: string;
   }) => {
     const { data, error } = await supabase
       .from('registro_alimentos')
