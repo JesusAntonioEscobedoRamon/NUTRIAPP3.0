@@ -14,8 +14,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import HamburgerMenu from '../components/HamburgerMenu';
-import { usePoints } from '../context/PointsContext';
+import { useUser } from '../hooks/useUser';
 import { useProfileImage } from '../context/ProfileImageContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
@@ -29,7 +30,7 @@ const COLORS = {
   border: '#D1E8D5',
 };
 
-// Componentes de animación (se mantienen igual)
+// Componentes de animación (sin cambios)
 const FloatingIcons = () => {
   const icons = ['leaf-outline', 'nutrition-outline', 'fitness-outline', 'heart-outline'];
   return (
@@ -67,32 +68,118 @@ const SingleFloatingIcon = ({ name, delay }: any) => {
 };
 
 export default function DashboardScreen({ navigation }: any) {
-  const { userPoints, todayPoints } = usePoints();
-  const { profileImage } = useProfileImage(); // Consumimos el contexto
+  const { user, refreshUserData } = useUser();
+  const { profileImage } = useProfileImage();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
 
+  // Puntos con fallback desde caché local si aún no carga
+  const [localUserPoints, setLocalUserPoints] = useState(0);
+  const [localTodayPoints, setLocalTodayPoints] = useState(0);
+
+  // Carga inicial desde caché (instantáneo)
+  useEffect(() => {
+    const loadCachedData = async () => {
+      try {
+        const cached = await AsyncStorage.getItem('dashboard_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setLocalUserPoints(parsed.puntos_totales || 0);
+          setLocalTodayPoints(parsed.puntos_hoy || 0);
+        }
+      } catch (e) {
+        console.warn("Error leyendo caché dashboard:", e);
+      }
+    };
+    loadCachedData();
+  }, []);
+
+  // Actualiza local cuando user llega fresco (y guarda en caché)
+  useEffect(() => {
+    if (user) {
+      const newPoints = user?.puntos_totales || 0;
+      const newToday = user?.puntos_hoy || 0;
+
+      setLocalUserPoints(newPoints);
+      setLocalTodayPoints(newToday);
+
+      // Guardar en caché
+      AsyncStorage.setItem('dashboard_cache', JSON.stringify({
+        puntos_totales: newPoints,
+        puntos_hoy: newToday,
+        timestamp: Date.now(),
+      })).catch(e => console.warn("Error guardando caché:", e));
+    }
+  }, [user]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refreshUserData(); // refresca datos reales
+    setRefreshing(false);
+  };
+
+  // Lógica corregida de rango y manzana
   const getRankData = () => {
-    if (userPoints <= 100) return { name: "COBRE", next: "PLATA", target: 100, color: '#CD7F32' };
-    if (userPoints <= 200) return { name: "PLATA", next: "ORO", target: 200, color: '#95A5A6' };
-    return { name: "ORO", next: "MÁXIMO", target: userPoints, color: '#D4AF37' };
+    const points = localUserPoints; // usamos el local para no esperar
+
+    if (points >= 10000) {
+      return { 
+        name: "DIAMANTE", 
+        next: "MÁXIMO", 
+        target: points, 
+        color: '#3498DB',
+       
+       
+      };
+    }
+    if (points >= 5000) {
+      return { 
+        name: "DIAMANTE", 
+        next: "LEYENDA", 
+        target: 10000, 
+        color: '#3498DB',
+       
+       
+      };
+    }
+    if (points >= 1000) {
+      return { 
+        name: "ORO", 
+        next: "DIAMANTE", 
+        target: 5000, 
+        color: '#D4AF37',
+       
+       
+      };
+    }
+    if (points >= 100) {
+      return { 
+        name: "PLATA", 
+        next: "ORO", 
+        target: 1000, 
+        color: '#C0C0C0',
+       
+       
+      };
+    }
+    return { 
+      name: "COBRE", 
+      next: "PLATA", 
+      target: 100, 
+      color: '#CD7F32',
+      
+      
+    };
   };
 
   const rank = getRankData();
-  const progress = (userPoints / rank.target) * 100;
+  const progress = rank.target > localUserPoints ? (localUserPoints / rank.target) * 100 : 100;
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1000);
-  };
-
-  // --- LÓGICA DE IMAGEN CORREGIDA ---
+  // Lógica de imagen (sin cambios)
   const getImageSource = () => {
-    // Si la imagen en el contexto es la de defecto "usu.webp"
     if (profileImage === 'usu.webp') {
-      return require('../../assets/usu.webp'); // Ruta relativa desde src/screens a assets/
+      return require('../../assets/usu.webp');
     }
-    // Si es una URL de internet o una ruta de archivo local (URI)
     return { uri: profileImage };
   };
 
@@ -136,11 +223,9 @@ export default function DashboardScreen({ navigation }: any) {
           <View style={styles.pointsRow}>
             <View>
               <Text style={styles.pointsLabel}>PUNTOS ACUMULADOS</Text>
-              <Text style={styles.pointsValue}>{userPoints}</Text>
+              <Text style={styles.pointsValue}>{localUserPoints}</Text>
             </View>
-            <View style={[styles.rankBadge, { borderColor: rank.color }]}>
-              <Text style={[styles.rankBadgeText, { color: rank.color }]}>{rank.name}</Text>
-            </View>
+            
           </View>
 
           <View style={styles.progressSection}>
@@ -153,12 +238,8 @@ export default function DashboardScreen({ navigation }: any) {
             </View>
           </View>
 
-          {todayPoints > 0 && (
-            <View style={styles.todayGain}>
-              <Ionicons name="trending-up" size={16} color={COLORS.primary} />
-              <Text style={styles.todayText}>Ganancia de hoy: +{todayPoints} pts</Text>
-            </View>
-          )}
+          
+       
         </TouchableOpacity>
 
         <Text style={styles.sectionTitle}>Servicios Disponibles</Text>

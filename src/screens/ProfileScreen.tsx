@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  TextInput
+  TextInput,
+  Animated,
+  Easing
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker'; 
@@ -42,7 +44,8 @@ const InfoRow = React.memo(({
   setEditedUser,
   fieldKey,
   isNumeric,
-  multiline
+  multiline,
+  keyboardType = 'default'
 }: any) => {
   const handleChangeText = (text: string) => {
     if (!setEditedUser) return;
@@ -94,7 +97,7 @@ const InfoRow = React.memo(({
           style={styles.input}
           value={currentValue}
           onChangeText={handleChangeText}
-          keyboardType={isNumeric ? 'numeric' : 'default'}
+          keyboardType={keyboardType || (isNumeric ? 'numeric' : 'default')}
           autoCapitalize="none"
           returnKeyType="done"
           multiline={multiline}
@@ -126,6 +129,70 @@ export default function ProfileScreen({ navigation }: any) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedUser, setEditedUser] = useState<any>(null);
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
+
+  // Loading animation values
+  const pulseValue = useRef(new Animated.Value(1)).current;
+  const breatheValue = useRef(new Animated.Value(1)).current;
+  const textOpacityValue = useRef(new Animated.Value(0.3)).current;
+
+  // Loading animation
+  useEffect(() => {
+    if (loading) {
+      // Pulse animation for the user icon
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseValue, {
+            toValue: 1.1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseValue, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+
+      // Breathing animation for the circle background
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(breatheValue, {
+            toValue: 1.2,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(breatheValue, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+
+      // Pulsing text animation
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(textOpacityValue, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(textOpacityValue, {
+            toValue: 0.3,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    }
+  }, [loading]);
 
   useEffect(() => {
     if (user) {
@@ -224,33 +291,12 @@ export default function ProfileScreen({ navigation }: any) {
   const handleSave = async () => {
     if (!editedUser) return;
 
-    if (editedUser.numero_celular && editedUser.numero_celular.length !== 10) {
-      Alert.alert('Error', 'El teléfono debe tener exactamente 10 dígitos.');
-      return;
-    }
-
-    if (editedUser.peso && parseFloat(editedUser.peso) > 600) {
-      Alert.alert('Error', 'El peso no puede exceder 600 kg.');
-      return;
-    }
-
-    if (editedUser.altura && parseFloat(editedUser.altura) > 300) {
-      Alert.alert('Error', 'La altura no puede exceder 300 cm.');
-      return;
-    }
-
     try {
+      // SOLO actualizar el nombre de usuario
       const { error } = await supabase
         .from('pacientes')
         .update({
-          nombre: editedUser.nombre,
-          apellido: editedUser.apellido,
-          nombre_usuario: editedUser.nombre_usuario,
-          numero_celular: editedUser.numero_celular,
-          peso: editedUser.peso,
-          altura: editedUser.altura,
-          objetivo: editedUser.objetivo,
-          alergias: editedUser.alergias,
+          nombre_usuario: editedUser.nombre_usuario
         })
         .eq('id_paciente', user.id_paciente);
 
@@ -258,10 +304,10 @@ export default function ProfileScreen({ navigation }: any) {
 
       setIsEditing(false);
       refreshUserData();
-      Alert.alert('Éxito', 'Perfil actualizado correctamente.');
+      Alert.alert('Éxito', 'Nombre de usuario actualizado correctamente.');
     } catch (err) {
-      console.error('Error al guardar perfil:', err);
-      Alert.alert('Error', 'No se pudo guardar los cambios.');
+      console.error('Error al guardar:', err);
+      Alert.alert('Error', 'No se pudo guardar el cambio.');
     }
   };
 
@@ -281,12 +327,71 @@ export default function ProfileScreen({ navigation }: any) {
     return `${age} años`;
   };
 
+  // Obtener categoría del IMC
+  const getBMICategory = (bmi: string) => {
+    const bmiValue = parseFloat(bmi);
+    if (bmiValue < 18.5) return 'Bajo peso';
+    if (bmiValue >= 18.5 && bmiValue < 25) return 'Normal';
+    if (bmiValue >= 25 && bmiValue < 30) return 'Sobrepeso';
+    if (bmiValue >= 30) return 'Obesidad';
+    return '';
+  };
+
+  // Loading component with animated user icon
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Cargando perfil...</Text>
-      </View>
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.loadingContent}>
+          <View style={styles.iconWrapper}>
+            <Animated.View
+              style={[
+                styles.circleBackground,
+                {
+                  transform: [{ scale: breatheValue }],
+                },
+              ]}
+            />
+            <Animated.View
+              style={[
+                styles.iconContainer,
+                {
+                  transform: [{ scale: pulseValue }],
+                },
+              ]}
+            >
+              <Ionicons name="person-circle" size={90} color={COLORS.primary} />
+            </Animated.View>
+          </View>
+          
+          <Animated.Text style={[styles.loadingText, { opacity: textOpacityValue }]}>
+            Cargando tu perfil...
+          </Animated.Text>
+          
+          <View style={styles.dotsContainer}>
+            {[0, 1, 2].map((i) => (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.dot,
+                  {
+                    opacity: textOpacityValue.interpolate({
+                      inputRange: [0.3, 1],
+                      outputRange: [0.3, 1],
+                    }),
+                    transform: [{
+                      scale: textOpacityValue.interpolate({
+                        inputRange: [0.3, 1],
+                        outputRange: [0.8, 1.2],
+                      })
+                    }]
+                  },
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -320,7 +425,13 @@ export default function ProfileScreen({ navigation }: any) {
             <Text style={styles.brandName}>MI PERFIL</Text>
             <View style={styles.underlineSmall} />
           </View>
-          <View style={styles.placeholder} />
+          <TouchableOpacity onPress={() => setIsEditing(!isEditing)} style={styles.editButton}>
+            <Ionicons 
+              name={isEditing ? "close-outline" : "create-outline"} 
+              size={24} 
+              color={COLORS.primary} 
+            />
+          </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -356,7 +467,8 @@ export default function ProfileScreen({ navigation }: any) {
             <View style={styles.statCard}>
               <MaterialCommunityIcons name="scale-bathroom" size={32} color={COLORS.primary} />
               <Text style={styles.statVal}>{bmi}</Text>
-              <Text style={styles.statLab}>MI IMC ACTUAL</Text>
+              <Text style={styles.statLab}>IMC</Text>
+              <Text style={styles.statCategory}>{getBMICategory(bmi)}</Text>
             </View>
           </View>
 
@@ -364,22 +476,14 @@ export default function ProfileScreen({ navigation }: any) {
           <View style={styles.infoBox}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>DATOS PERSONALES</Text>
-              <TouchableOpacity onPress={() => setIsEditing(!isEditing)}>
-                <Text style={styles.editText}>{isEditing ? 'Cancelar' : 'Editar'}</Text>
-              </TouchableOpacity>
             </View>
-            
-            {isEditing && (
-              <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                <Text style={styles.saveButtonText}>Guardar Cambios</Text>
-              </TouchableOpacity>
-            )}
 
+            {/* ÚNICO CAMPO EDITABLE: NOMBRE DE USUARIO */}
             <InfoRow 
               label="Nombre de usuario" 
               icon="at-outline" 
               value={user.nombre_usuario} 
-              editable 
+              editable={true} // Solo este campo es editable
               isEditing={isEditing}
               editedUser={editedUser}
               setEditedUser={setEditedUser}
@@ -388,43 +492,37 @@ export default function ProfileScreen({ navigation }: any) {
               multiline={false}
             />
 
+            {/* TODOS LOS DEMÁS CAMPOS SON SOLO VISUALIZACIÓN */}
+            <InfoRow 
+              label="Correo electrónico" 
+              icon="mail-outline" 
+              value={user.correo} 
+              editable={false}
+              isEditing={isEditing}
+            />
+
             <InfoRow 
               label="Teléfono" 
               icon="call-outline" 
               value={user.numero_celular} 
-              editable 
+              editable={false}
               isEditing={isEditing}
-              editedUser={editedUser}
-              setEditedUser={setEditedUser}
-              fieldKey="numero_celular"
-              isNumeric={true}
-              multiline={false}
             />
 
             <InfoRow 
               label="Peso" 
               icon="speedometer-outline" 
-              value={user.peso ? `${user.peso} kg` : ''} 
-              editable 
+              value={user.peso ? `${user.peso} kg` : 'No registrado'} 
+              editable={false}
               isEditing={isEditing}
-              editedUser={editedUser}
-              setEditedUser={setEditedUser}
-              fieldKey="peso"
-              isNumeric={true}
-              multiline={false}
             />
 
             <InfoRow 
               label="Altura" 
               icon="resize-outline" 
-              value={user.altura ? `${user.altura} cm` : ''} 
-              editable 
+              value={user.altura ? `${user.altura} cm` : 'No registrado'} 
+              editable={false}
               isEditing={isEditing}
-              editedUser={editedUser}
-              setEditedUser={setEditedUser}
-              fieldKey="altura"
-              isNumeric={true}
-              multiline={false}
             />
 
             <InfoRow 
@@ -450,28 +548,25 @@ export default function ProfileScreen({ navigation }: any) {
                 label="Objetivo" 
                 icon="trophy-outline" 
                 value={user.objetivo || 'Ninguna'} 
-                editable 
+                editable={false}
                 isEditing={isEditing}
-                editedUser={editedUser}
-                setEditedUser={setEditedUser}
-                fieldKey="objetivo"
-                isNumeric={false}
-                multiline={true}
               />
 
               <InfoRow 
                 label="Alergias" 
                 icon="medical-outline" 
                 value={user.alergias || 'Ninguna'} 
-                editable 
+                editable={false}
                 isEditing={isEditing}
-                editedUser={editedUser}
-                setEditedUser={setEditedUser}
-                fieldKey="alergias"
-                isNumeric={false}
-                multiline={true}
               />
             </View>
+
+            {/* BOTÓN GUARDAR - SOLO VISIBLE EN MODO EDICIÓN */}
+            {isEditing && (
+              <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+                <Text style={styles.saveButtonText}>Guardar Nombre de Usuario</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* CERRAR SESIÓN */}
@@ -488,22 +583,63 @@ export default function ProfileScreen({ navigation }: any) {
   );
 }
 
-// ============ ESTILOS (EXACTAMENTE IGUALES) ============
+// ============ ESTILOS ============
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
   loadingContainer: { 
     flex: 1, 
     justifyContent: 'center', 
     alignItems: 'center',
-    backgroundColor: COLORS.secondary 
+    backgroundColor: COLORS.white 
   },
-  loadingText: { marginTop: 10, color: COLORS.textLight },
+  loadingContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 30,
+  },
+  circleBackground: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: COLORS.secondary,
+  },
+  iconContainer: {
+    width: 100,
+    height: 100,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: { 
+    marginTop: 10, 
+    color: COLORS.primary,
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 20,
+  },
+  dotsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.primary,
+  },
   errorText: { marginTop: 10, color: COLORS.error, fontWeight: '600' },
   retryButton: { marginTop: 20, padding: 15, backgroundColor: COLORS.primary, borderRadius: 10 },
   retryText: { color: COLORS.white, fontWeight: 'bold' },
   
   header: {
-    height: 70,
+    height: 80,
     backgroundColor: COLORS.white,
     flexDirection: 'row', 
     alignItems: 'center',
@@ -511,12 +647,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    paddingTop: 10,
   },
   backButton: {
     padding: 5,
   },
-  placeholder: {
-    width: 34, 
+  editButton: {
+    padding: 5,
   },
   brandContainer: { alignItems: 'center' },
   brandName: { fontSize: 18, fontWeight: '900', color: COLORS.primary, letterSpacing: 2 },
@@ -534,6 +671,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     borderTopWidth: 0,
+    marginTop: 5,
   },
   avatarWrapper: {
     position: 'relative',
@@ -598,6 +736,7 @@ const styles = StyleSheet.create({
   },
   statVal: { fontSize: 22, fontWeight: '900', color: COLORS.textDark, marginVertical: 4 },
   statLab: { fontSize: 9, fontWeight: '800', color: COLORS.primary, letterSpacing: 0.5 },
+  statCategory: { fontSize: 10, fontWeight: '600', color: COLORS.textLight, marginTop: 2 },
 
   infoBox: {
     margin: 20,
@@ -614,13 +753,12 @@ const styles = StyleSheet.create({
     marginBottom: 15
   },
   sectionTitle: { fontSize: 11, fontWeight: '900', color: COLORS.primary, letterSpacing: 1.5 },
-  editText: { color: COLORS.primary, fontWeight: '700', fontSize: 14 },
   saveButton: {
     backgroundColor: COLORS.primary,
     padding: 12,
     borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 15
+    marginTop: 20
   },
   saveButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14 },
   row: {

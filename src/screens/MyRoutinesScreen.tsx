@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, StyleSheet, ScrollView, TouchableOpacity, 
-  SafeAreaView, StatusBar, TextInput, Alert, KeyboardAvoidingView, Platform 
+  SafeAreaView, StatusBar, TextInput, Alert, KeyboardAvoidingView, Platform,
+  Animated, Easing
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '../hooks/useUser';
 import { routineService } from '../services/routineService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const COLORS = {
   primary: '#2E8B57',
@@ -22,19 +24,132 @@ export default function MyRoutinesScreen({ navigation }: any) {
   const { user, updatePoints } = useUser();
   const [exercises, setExercises] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userLoaded, setUserLoaded] = useState(false); // Nuevo: para esperar carga de user
+  const [userLoaded, setUserLoaded] = useState(false);
 
-  // Estados del formulario
+  // Loading animation values (sin cambios)
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const bounceValue = useRef(new Animated.Value(0)).current;
+  const weightScale = useRef(new Animated.Value(1)).current;
+  const weightOpacity = useRef(new Animated.Value(0.5)).current;
+  const loadingTextOpacity = useRef(new Animated.Value(0.3)).current;
+
+  // Estados del formulario (sin cambios)
   const [newName, setNewName] = useState('');
   const [newSets, setNewSets] = useState('');
   const [newReps, setNewReps] = useState('');
   const [newDuration, setNewDuration] = useState('');
 
+  // Loading animation (sin cambios)
+  useEffect(() => {
+    if (loading) {
+      // Rotation animation for the dumbbell
+      Animated.loop(
+        Animated.timing(spinValue, {
+          toValue: 1,
+          duration: 2000,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      ).start();
+
+      // Bounce animation (up and down)
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(bounceValue, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(bounceValue, {
+            toValue: 0,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+
+      // Scale animation for the weight
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(weightScale, {
+            toValue: 1.2,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(weightScale, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+
+      // Opacity animation
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(weightOpacity, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(weightOpacity, {
+            toValue: 0.5,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+
+      // Pulsing text animation
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(loadingTextOpacity, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(loadingTextOpacity, {
+            toValue: 0.3,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    }
+  }, [loading]);
+
+  // Carga inicial desde caché (instantánea)
+  useEffect(() => {
+    const loadCachedExercises = async () => {
+      try {
+        const cached = await AsyncStorage.getItem('routines_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setExercises(parsed || []);
+          setLoading(false);
+          console.log("Ejercicios cargados DESDE CACHÉ");
+        }
+      } catch (e) {
+        console.warn("Error al leer caché de rutinas:", e);
+      }
+    };
+
+    loadCachedExercises();
+  }, []);
+
   useEffect(() => {
     if (user) {
       console.log('MyRoutinesScreen - Usuario cargado:', user);
       setUserLoaded(true);
-      fetchExercises();
+      fetchExercises(); // Carga fresca y actualiza caché
     } else {
       console.log('MyRoutinesScreen - Esperando carga de usuario...');
       setLoading(true);
@@ -43,7 +158,6 @@ export default function MyRoutinesScreen({ navigation }: any) {
 
   useEffect(() => {
     if (userLoaded && !user?.id_paciente) {
-      // Solo alerta si user ya cargó y aún no hay id_paciente (raro)
       Alert.alert('Error', 'No se encontró ID de paciente. Intenta cerrar y abrir sesión.');
       setLoading(false);
     }
@@ -57,6 +171,13 @@ export default function MyRoutinesScreen({ navigation }: any) {
       Alert.alert('Error', 'No se pudieron cargar los ejercicios: ' + (error?.message || 'Desconocido'));
     } else {
       setExercises(data || []);
+      // Guardar en caché
+      try {
+        await AsyncStorage.setItem('routines_cache', JSON.stringify(data || []));
+        console.log("Rutinas guardadas en caché");
+      } catch (e) {
+        console.warn("Error guardando caché de rutinas:", e);
+      }
     }
     setLoading(false);
   };
@@ -99,7 +220,9 @@ export default function MyRoutinesScreen({ navigation }: any) {
       console.log('Éxito al agregar ejercicio:', data);
       await updatePoints(5);
       Alert.alert('Éxito', 'Ejercicio registrado y 5 puntos agregados!');
-      fetchExercises();
+      
+      // Refrescar y actualizar caché
+      await fetchExercises();
     }
 
     // Limpiar formulario
@@ -119,15 +242,72 @@ export default function MyRoutinesScreen({ navigation }: any) {
       Alert.alert('Error al eliminar', errorMsg || 'Error desconocido');
     } else {
       Alert.alert('Éxito', 'Ejercicio eliminado');
-      fetchExercises();
+      
+      // Refrescar y actualizar caché
+      await fetchExercises();
     }
   };
 
+  // Loading component with animated dumbbell (sin cambios)
   if (loading) {
+    const spin = spinValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['-15deg', '15deg']
+    });
+
+    const bounce = bounceValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, -15]
+    });
+
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <Text>Cargando rutinas...</Text>
-      </View>
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.loadingContent}>
+          <Animated.View
+            style={[
+              styles.iconContainer,
+              {
+                transform: [
+                  { rotate: spin },
+                  { translateY: bounce },
+                  { scale: weightScale }
+                ],
+                opacity: weightOpacity,
+              },
+            ]}
+          >
+            <Ionicons name="barbell" size={80} color={COLORS.primary} />
+          </Animated.View>
+          
+          <Animated.Text style={[styles.loadingText, { opacity: loadingTextOpacity }]}>
+            Cargando rutinas...
+          </Animated.Text>
+          
+          <View style={styles.dotsContainer}>
+            {[0, 1, 2].map((i) => (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.dot,
+                  {
+                    opacity: loadingTextOpacity.interpolate({
+                      inputRange: [0.3, 1],
+                      outputRange: [0.3, 1],
+                    }),
+                    transform: [{
+                      scale: loadingTextOpacity.interpolate({
+                        inputRange: [0.3, 1],
+                        outputRange: [0.8, 1.2],
+                      })
+                    }]
+                  },
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -287,5 +467,39 @@ const styles = StyleSheet.create({
   
   emptyBox: { padding: 40, alignItems: 'center' },
   emptyText: { color: COLORS.textLight, fontWeight: '600', fontStyle: 'italic' },
-  spacer: { height: 40 }
+  spacer: { height: 40 },
+
+  // Loading styles (sin cambios)
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconContainer: {
+    marginBottom: 30,
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.primary,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  dotsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.primary,
+  },
 });

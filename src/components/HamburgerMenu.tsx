@@ -7,10 +7,12 @@ import {
   Animated,
   Dimensions,
   I18nManager,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { useUser } from '../hooks/useUser'; // Importamos el hook de usuario
+import { useUser } from '../hooks/useUser';
+import { useProfileImage } from '../context/ProfileImageContext'; // Importamos el contexto de imagen
 
 const { width } = Dimensions.get('window');
 
@@ -34,7 +36,9 @@ interface HamburgerMenuProps {
 
 export default function HamburgerMenu({ isVisible, onClose, navigation }: HamburgerMenuProps) {
   const { signOut, user: authUser } = useAuth();
-  const { user: userData, loading: userLoading } = useUser(); // Obtenemos datos del usuario
+  const { user: userData, loading: userLoading } = useUser();
+  const { profileImage } = useProfileImage(); // Obtenemos la imagen de perfil del contexto
+  
   const slideAnim = React.useRef(new Animated.Value(-width)).current;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   
@@ -113,7 +117,6 @@ export default function HamburgerMenu({ isVisible, onClose, navigation }: Hambur
     { icon: 'person-outline', name: 'Perfil', screen: 'Profile' },
     { icon: 'trophy-outline', name: 'Mis Puntos', screen: 'Points' },
     { icon: 'calendar-outline', name: 'Agendar Cita', screen: 'Schedule' },
-    { icon: 'restaurant-outline', name: 'Mis Dietas', screen: 'MyDiet' },
     { icon: 'barbell-outline', name: 'Mis Rutinas', screen: 'MyRoutines' },
     { icon: 'nutrition-outline', name: 'Registrar Alimentos', screen: 'FoodTracking' },
   ];
@@ -135,7 +138,16 @@ export default function HamburgerMenu({ isVisible, onClose, navigation }: Hambur
       // Podrías verificar puntos para determinar si es premium
       return 'Usuario Activo';
     }
-    return 'Premium Activo';
+    return 'Usaurio Activo';
+  };
+
+  // Determinar qué imagen mostrar en el avatar
+  const getAvatarSource = () => {
+    if (profileImage && profileImage !== 'usu.webp') {
+      return { uri: profileImage };
+    }
+    // Si no hay foto de perfil, mostramos el icono por defecto
+    return null;
   };
 
   if (!isVisible) return null;
@@ -160,11 +172,15 @@ export default function HamburgerMenu({ isVisible, onClose, navigation }: Hambur
           </TouchableOpacity>
         </View>
 
-        {/* Sección de usuario con datos reales */}
+        {/* Sección de usuario con datos reales y foto de perfil */}
         <View style={styles.userSection}>
           <View style={styles.userAvatar}>
-            {userData?.foto_perfil ? (
-              <Ionicons name="person" size={24} color={COLORS.primary} />
+            {getAvatarSource() ? (
+              <Image 
+                source={getAvatarSource()} 
+                style={styles.avatarImage}
+                onError={(e) => console.log('Error cargando avatar en menú:', e.nativeEvent.error)}
+              />
             ) : (
               <Ionicons name="person" size={24} color={COLORS.primary} />
             )}
@@ -286,6 +302,12 @@ const styles = StyleSheet.create({
     marginRight: 15,
     borderWidth: 1,
     borderColor: 'rgba(46, 139, 87, 0.2)',
+    overflow: 'hidden', // Importante para que la imagen se ajuste al borde redondeado
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   userName: { 
     fontSize: 16, 

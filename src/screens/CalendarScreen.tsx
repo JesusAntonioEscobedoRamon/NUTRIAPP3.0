@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, SafeAreaView, StatusBar,
-  Dimensions, BackHandler 
+  Dimensions 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { useUser } from '../hooks/useUser';
 
-// Definir width (soluciona cualquier error previo)
 const { width } = Dimensions.get('window');
 
-// Paleta Nutri U (igual que tu versión)
 const COLORS = {
   primary: '#2E8B57',
   secondary: '#F0FFF4',
@@ -21,34 +20,37 @@ const COLORS = {
   error: '#FF6B6B'
 };
 
+// Zona horaria Sonora (MST UTC-7 sin horario de verano)
+const TIMEZONE = 'America/Hermosillo';
+
+// Horario de la clínica en formato 24h
+const CLINIC_OPEN_HOUR = 7;   // 07:00
+const CLINIC_CLOSE_HOUR = 16; // 16:00 (hasta 15:59 permitido)
+
 export default function CalendarScreen({ navigation, route }: any) {
-  const { doctorName, doctorId } = route.params || { doctorName: 'el especialista seleccionado', doctorId: null };
-  const [selectedDate, setSelectedDate] = useState('');
-  const [selectedHour, setSelectedHour] = useState('');
-  const [showAlertModal, setShowAlertModal] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
+  const { doctorName, doctorId, precio } = route.params || { 
+    doctorName: 'el especialista seleccionado', 
+    doctorId: null,
+    precio: 800 
+  };
+  
+  const { user: patientData } = useUser();
+
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedHour24, setSelectedHour24] = useState<string | null>(null); // ej: "13:30"
   const [occupiedDays, setOccupiedDays] = useState<number[]>([]);
-  const [occupiedHours, setOccupiedHours] = useState<string[]>([]);
+  const [occupiedHours24, setOccupiedHours24] = useState<string[]>([]);
   const [currentMonthIndex, setCurrentMonthIndex] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [availableHours24, setAvailableHours24] = useState<string[]>([]); // ej: ["07:00", "07:30", ..., "15:30"]
 
   const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-
-  // Horas con minutos y AM/PM (7:00 AM - 4:00 PM, intervalos de 30 min)
-  const hours = [
-    '7:00 AM', '7:30 AM', '8:00 AM', '8:30 AM', '9:00 AM', '9:30 AM',
-    '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM',
-    '1:00 PM', '1:30 PM', '2:00 PM', '2:30 PM', '3:00 PM', '3:30 PM',
-    '4:00 PM'
-  ];
 
   const today = new Date();
   const currentDay = today.getDate();
   const currentMonthNum = today.getMonth();
   const currentYearNum = today.getFullYear();
-
-  const isCurrentMonth = currentMonthIndex === currentMonthNum && currentYear === currentYearNum;
 
   const currentMonth = {
     month: months[currentMonthIndex],
@@ -56,6 +58,39 @@ export default function CalendarScreen({ navigation, route }: any) {
     days: new Date(currentYear, currentMonthIndex + 1, 0).getDate(),
     startDay: new Date(currentYear, currentMonthIndex, 1).getDay()
   };
+
+  // Generar horas disponibles en formato 24h (solo futuras y dentro de horario)
+  useEffect(() => {
+    if (!selectedDate) {
+      setAvailableHours24([]);
+      return;
+    }
+
+    const selectedFullDate = new Date(currentYear, currentMonthIndex, parseInt(selectedDate));
+    const now = new Date();
+    const isToday = selectedFullDate.toDateString() === now.toDateString();
+
+    const hoursList: string[] = [];
+
+    for (let h = CLINIC_OPEN_HOUR; h < CLINIC_CLOSE_HOUR; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        const hourDate = new Date(selectedFullDate);
+        hourDate.setHours(h, m, 0, 0);
+
+        if (isToday && hourDate <= now) continue;
+
+        const hourStr = hourDate.toLocaleTimeString('es-MX', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+
+        hoursList.push(hourStr);
+      }
+    }
+
+    setAvailableHours24(hoursList);
+  }, [selectedDate, currentMonthIndex, currentYear]);
 
   useEffect(() => {
     const fetchOccupiedDays = async () => {
@@ -85,8 +120,8 @@ export default function CalendarScreen({ navigation, route }: any) {
       if (!selectedDate || !doctorId) return;
 
       const selectedFullDate = new Date(currentYear, currentMonthIndex, parseInt(selectedDate));
-      const startOfDay = selectedFullDate.toISOString().split('T')[0] + 'T00:00:00Z';
-      const endOfDay = selectedFullDate.toISOString().split('T')[0] + 'T23:59:59Z';
+      const startOfDay = selectedFullDate.toISOString().split('T')[0] + 'T00:00:00';
+      const endOfDay = selectedFullDate.toISOString().split('T')[0] + 'T23:59:59';
 
       try {
         const { data, error } = await supabase
@@ -101,13 +136,13 @@ export default function CalendarScreen({ navigation, route }: any) {
 
         const occupied = data?.map(cita => {
           const date = new Date(cita.fecha_hora);
-          const hour = date.getHours();
-          const minute = date.getMinutes();
-          const amPm = hour >= 12 ? 'PM' : 'AM';
-          const displayHour = hour % 12 || 12;
-          return `${displayHour}:${minute.toString().padStart(2, '0')} ${amPm}`;
+          return date.toLocaleTimeString('es-MX', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
         }) || [];
-        setOccupiedHours([...new Set(occupied)]);
+        setOccupiedHours24([...new Set(occupied)]);
       } catch (err) {
         console.error('Error al cargar horas ocupadas:', err);
       }
@@ -134,8 +169,8 @@ export default function CalendarScreen({ navigation, route }: any) {
     } else {
       setCurrentMonthIndex(currentMonthIndex - 1);
     }
-    setSelectedDate('');
-    setSelectedHour('');
+    setSelectedDate(null);
+    setSelectedHour24(null);
   };
 
   const handleNextMonth = () => {
@@ -145,8 +180,8 @@ export default function CalendarScreen({ navigation, route }: any) {
     } else {
       setCurrentMonthIndex(currentMonthIndex + 1);
     }
-    setSelectedDate('');
-    setSelectedHour('');
+    setSelectedDate(null);
+    setSelectedHour24(null);
   };
 
   const isSunday = (day: number) => {
@@ -169,77 +204,121 @@ export default function CalendarScreen({ navigation, route }: any) {
 
     if (day && !occupiedDays.includes(day)) {
       setSelectedDate(day.toString());
-      setSelectedHour('');
+      setSelectedHour24(null);
     }
   };
 
-  const handleHourPress = (hour: string) => {
-    if (occupiedHours.includes(hour)) {
+  const handleHourPress = (hour24: string) => {
+    if (occupiedHours24.includes(hour24)) {
       Alert.alert('Hora no disponible', 'Esta hora ya está ocupada por otro paciente.');
       return;
     }
-    setSelectedHour(hour);
+    setSelectedHour24(hour24);
   };
 
   const scheduleAppointment = () => {
-    if (!selectedDate || !selectedHour) {
+    if (!selectedDate || !selectedHour24) {
       Alert.alert('Atención', 'Por favor selecciona un día y una hora disponibles.');
       return;
     }
-    setShowAlertModal(true);
+
+    confirmFinalAppointment();
   };
 
   const confirmFinalAppointment = async () => {
-    setShowAlertModal(false);
-    setShowConfirmation(true);
+    if (!patientData?.id_paciente) {
+      Alert.alert('Error', 'No se pudo identificar al paciente. Inicia sesión nuevamente.');
+      return;
+    }
 
     try {
-      const [timeStr, amPm] = selectedHour.split(' ');
-      const [hourStr, minuteStr] = timeStr.split(':');
-      let hourNum = parseInt(hourStr);
-      if (amPm === 'PM' && hourNum !== 12) hourNum += 12;
-      if (amPm === 'AM' && hourNum === 12) hourNum = 0;
-      const fullDateTime = new Date(currentYear, currentMonthIndex, parseInt(selectedDate), hourNum, parseInt(minuteStr));
-      await supabase
-        .from('citas')
-        .update({ fecha_hora: fullDateTime.toISOString() })
-        .eq('id_nutriologo', doctorId)
-        .eq('estado', 'pendiente')
-        .order('created_at', { ascending: false })
-        .limit(1);
-    } catch (err) {
-      console.error('Error al actualizar cita:', err);
-      Alert.alert('Error', 'No se pudo confirmar la hora de la cita.');
+      // Parsear hora 24h seleccionada (ej: "13:30" → hour24 = 13, minute = 30)
+      const [hourStr, minuteStr] = selectedHour24!.split(':');
+      const hour24 = parseInt(hourStr, 10);
+      const minute = parseInt(minuteStr, 10);
+
+      // Log para depurar
+      console.log('Hora seleccionada (24h):', selectedHour24);
+      console.log('Hora:', hour24, 'Minutos:', minute);
+
+      // Validación de horario - comparación directa
+      const openHour = CLINIC_OPEN_HOUR;
+      const closeHour = CLINIC_CLOSE_HOUR;
+
+      // Bloqueo de horas pasadas si es hoy
+      const now = new Date();
+      const isToday = selectedDate === now.getDate().toString() && 
+                      currentMonthIndex === now.getMonth() && 
+                      currentYear === now.getFullYear();
+
+      if (isToday) {
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        if (hour24 < currentHour || 
+            (hour24 === currentHour && minute <= currentMinute)) {
+          Alert.alert('Hora no válida', 'No puedes agendar en una hora que ya pasó o es la actual.');
+          return;
+        }
+      }
+
+      // Bloqueo fuera de horario (permite hasta 15:59)
+      if (hour24 < openHour || hour24 > closeHour || 
+          (hour24 === closeHour && minute > 0)) {
+        Alert.alert('Horario fuera de servicio', 'La clínica atiende de 7:00 a 16:00.');
+        return;
+      }
+
+      // Crear fecha local
+      const fechaHoraLocal = new Date(currentYear, currentMonthIndex, parseInt(selectedDate!), hour24, minute);
+
+      // Formato ISO manual
+      const year = fechaHoraLocal.getFullYear();
+      const month = String(fechaHoraLocal.getMonth() + 1).padStart(2, '0');
+      const day = String(fechaHoraLocal.getDate()).padStart(2, '0');
+      const hours = String(fechaHoraLocal.getHours()).padStart(2, '0');
+      const minutes = String(fechaHoraLocal.getMinutes()).padStart(2, '0');
+
+      const fechaHoraISO = `${year}-${month}-${day}T${hours}:${minutes}:00`;
+
+      console.log('Enviando fecha a Supabase:', fechaHoraISO);
+
+      // Crear cita
+      const { data: citaResult, error } = await supabase.rpc('crear_cita_pendiente', {
+        p_id_paciente: patientData.id_paciente,
+        p_id_nutriologo: doctorId,
+        p_fecha_hora: fechaHoraISO,
+        p_tipo_cita: 'presencial',
+        p_motivo: 'Consulta inicial',
+      });
+
+      if (error || !citaResult) {
+        console.error('Error creando cita con RPC:', error);
+        Alert.alert('Error', 'No se pudo reservar la cita. Intenta nuevamente.');
+        return;
+      }
+
+      const citaId = citaResult;
+
+      // Navegar a pago sin alerta
+      navigation.navigate('Schedule', {
+        citaId,
+        doctorName,
+        doctorId,
+        precio: precio || 800,
+      });
+
+    } catch (err: any) {
+      console.error('Error al crear cita:', err);
+      Alert.alert('Error', 'Ocurrió un problema inesperado: ' + err.message);
     }
   };
-
-  const confirmAppointment = () => {
-    setShowConfirmation(false);
-    setTimeout(() => {
-      navigation.navigate('Dashboard');
-    }, 300);
-  };
-
-  const handleBack = () => {
-    Alert.alert('Espera', 'Debes seleccionar y confirmar una fecha antes de salir.');
-  };
-
-  // Bloquear botón físico de back en Android
-  useEffect(() => {
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleBack();
-      return true; // Bloquea el back físico
-    });
-
-    return () => backHandler.remove();
-  }, [selectedDate, showConfirmation]);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleBack} style={styles.headerIcon}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerIcon}>
           <Ionicons name="arrow-back-outline" size={26} color={COLORS.primary} />
         </TouchableOpacity>
         <View style={styles.brandContainer}>
@@ -250,7 +329,6 @@ export default function CalendarScreen({ navigation, route }: any) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
         <View style={styles.doctorInfoCard}>
           <Ionicons name="medical" size={20} color={COLORS.primary} />
           <Text style={styles.doctorText}>Cita con: <Text style={styles.bold}>{doctorName}</Text></Text>
@@ -266,7 +344,7 @@ export default function CalendarScreen({ navigation, route }: any) {
               <Ionicons name="chevron-forward" size={24} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.weekDaysContainer}>
             {daysOfWeek.map((day) => (
               <Text key={day} style={styles.weekDayText}>{day}</Text>
@@ -276,7 +354,9 @@ export default function CalendarScreen({ navigation, route }: any) {
           <View style={styles.calendarGrid}>
             {generateCalendarDays().map((item, index) => {
               const dayNum = item.day as number;
-              const isPast = (currentYear < currentYearNum) || (currentYear === currentYearNum && currentMonthIndex < currentMonthNum) || (currentYear === currentYearNum && currentMonthIndex === currentMonthNum && dayNum < currentDay);
+              const isPast = (currentYear < currentYearNum) || 
+                            (currentYear === currentYearNum && currentMonthIndex < currentMonthNum) || 
+                            (currentYear === currentYearNum && currentMonthIndex === currentMonthNum && dayNum < currentDay);
               const isSundayDay = isSunday(dayNum);
               return (
                 <TouchableOpacity
@@ -285,11 +365,11 @@ export default function CalendarScreen({ navigation, route }: any) {
                     styles.dayButton,
                     item.empty && styles.emptyDay,
                     item.occupied && styles.occupiedDay,
-                    !item.empty && selectedDate === item.day.toString() && styles.selectedDay,
+                    !item.empty && selectedDate === item.day?.toString() && styles.selectedDay,
                     isPast && styles.pastDay,
                     isSundayDay && styles.occupiedDay
                   ]}
-                  onPress={() => !item.empty && !item.occupied && !isPast && !isSundayDay && setSelectedDate(item.day.toString())}
+                  onPress={() => !item.empty && !item.occupied && !isPast && !isSundayDay && handleDayPress(dayNum)}
                   disabled={item.empty || item.occupied || isPast || isSundayDay}
                 >
                   {!item.empty && (
@@ -297,7 +377,7 @@ export default function CalendarScreen({ navigation, route }: any) {
                       <Text style={[
                         styles.dayText,
                         item.occupied && styles.occupiedDayText,
-                        selectedDate === item.day.toString() && styles.selectedDayText,
+                        selectedDate === item.day?.toString() && styles.selectedDayText,
                         isPast && styles.occupiedDayText,
                         isSundayDay && styles.occupiedDayText
                       ]}>
@@ -312,35 +392,43 @@ export default function CalendarScreen({ navigation, route }: any) {
           </View>
         </View>
 
-        {/* Horas con botones bonitos */}
-        <View style={styles.hourPickerContainer}>
-          <Text style={styles.hourTitle}>Selecciona una hora (7 AM - 4 PM)</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hourScroll}>
-            {hours.map((hour) => {
-              const isOccupied = occupiedHours.includes(hour);
-              return (
-                <TouchableOpacity
-                  key={hour}
-                  style={[
-                    styles.hourButton,
-                    selectedHour === hour && styles.selectedHourButton,
-                    isOccupied && styles.occupiedHourButton
-                  ]}
-                  onPress={() => !isOccupied && setSelectedHour(hour)}
-                  disabled={isOccupied}
-                >
-                  <Text style={[
-                    styles.hourText,
-                    selectedHour === hour && styles.selectedHourText,
-                    isOccupied && styles.occupiedHourText
-                  ]}>
-                    {hour}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+        {selectedDate && (
+          <View style={styles.hourPickerContainer}>
+            <Text style={styles.hourTitle}>Horarios disponibles (24h)</Text>
+            
+            {availableHours24.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hourScroll}>
+                {availableHours24.map((hour24) => {
+                  const isOccupied = occupiedHours24.includes(hour24);
+                  return (
+                    <TouchableOpacity
+                      key={hour24}
+                      style={[
+                        styles.hourButton,
+                        selectedHour24 === hour24 && styles.selectedHourButton,
+                        isOccupied && styles.occupiedHourButton
+                      ]}
+                      onPress={() => !isOccupied && setSelectedHour24(hour24)}
+                      disabled={isOccupied}
+                    >
+                      <Text style={[
+                        styles.hourText,
+                        selectedHour24 === hour24 && styles.selectedHourText,
+                        isOccupied && styles.occupiedHourText
+                      ]}>
+                        {hour24}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <Text style={{ color: COLORS.error, textAlign: 'center', marginTop: 10 }}>
+                No hay horarios disponibles para este día.
+              </Text>
+            )}
+          </View>
+        )}
 
         <View style={styles.legend}>
           <View style={styles.legendItem}><View style={[styles.dot, {backgroundColor: COLORS.primary}]} /><Text style={styles.legendText}>Disponible</Text></View>
@@ -348,55 +436,13 @@ export default function CalendarScreen({ navigation, route }: any) {
         </View>
 
         <TouchableOpacity 
-          style={[styles.mainButton, (!selectedDate || !selectedHour) && styles.disabledButton]} 
+          style={[styles.mainButton, (!selectedDate || !selectedHour24) && styles.disabledButton]} 
           onPress={scheduleAppointment}
-          disabled={!selectedDate || !selectedHour}
+          disabled={!selectedDate || !selectedHour24}
         >
           <Text style={styles.mainButtonText}>CONFIRMAR CITA</Text>
         </TouchableOpacity>
       </ScrollView>
-
-      {/* ALERTA MODAL ANTES DE CONFIRMAR */}
-      <Modal visible={showAlertModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>¿Confirmar Cita?</Text>
-            <Text style={styles.modalText}>
-              ¿Estás seguro de agendar tu cita el día {selectedDate} de {currentMonth.month} de {currentMonth.year} a las {selectedHour} con {doctorName}?
-            </Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancelButton} onPress={() => setShowAlertModal(false)}>
-                <Text style={styles.modalCancelText}>No</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirmButton} onPress={confirmFinalAppointment}>
-                <Text style={styles.modalButtonText}>Sí</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* MODAL DE CONFIRMACIÓN FINAL */}
-      <Modal visible={showConfirmation} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.successIconContainer}>
-              <Ionicons name="checkmark-circle" size={80} color={COLORS.primary} />
-            </View>
-            <Text style={styles.modalTitle}>¡Cita Confirmada!</Text>
-            <Text style={styles.modalText}>
-              Tu cita con <Text style={styles.bold}>{doctorName}</Text> ha sido registrada correctamente.
-            </Text>
-            <View style={styles.modalInfoPill}>
-              <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
-              <Text style={styles.modalInfoText}>{selectedDate} de {currentMonth.month}, {currentMonth.year} a las {selectedHour}</Text>
-            </View>
-            <TouchableOpacity style={styles.modalButton} onPress={confirmAppointment}>
-              <Text style={styles.modalButtonText}>ENTENDIDO</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -499,18 +545,4 @@ const styles = StyleSheet.create({
   mainButton: { backgroundColor: COLORS.primary, padding: 18, borderRadius: 18, alignItems: 'center' },
   disabledButton: { backgroundColor: '#CBD5E1' },
   mainButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 16, letterSpacing: 1 },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(26, 48, 38, 0.8)', justifyContent: 'center', alignItems: 'center', padding: 30 },
-  modalContent: { backgroundColor: COLORS.white, borderRadius: 30, padding: 30, width: '100%', alignItems: 'center', borderWidth: 3, borderColor: COLORS.primary },
-  successIconContainer: { marginBottom: 15 },
-  modalTitle: { fontSize: 24, fontWeight: '900', color: COLORS.primary, marginBottom: 10 },
-  modalText: { textAlign: 'center', fontSize: 16, color: COLORS.textLight, lineHeight: 22, marginBottom: 20 },
-  modalInfoPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.secondary, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, marginBottom: 25, borderWidth: 1, borderColor: COLORS.border },
-  modalInfoText: { marginLeft: 10, color: COLORS.primary, fontWeight: '800', fontSize: 15 },
-  modalButton: { backgroundColor: COLORS.primary, width: '100%', padding: 18, borderRadius: 15, alignItems: 'center' },
-  modalButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14 },
-  modalButtons: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
-  modalCancelButton: { backgroundColor: COLORS.error, padding: 18, borderRadius: 15, alignItems: 'center', flex: 1, marginRight: 10 },
-  modalCancelText: { color: COLORS.white, fontWeight: '900', fontSize: 14 },
-  modalConfirmButton: { backgroundColor: COLORS.primary, padding: 18, borderRadius: 15, alignItems: 'center', flex: 1 },
 });

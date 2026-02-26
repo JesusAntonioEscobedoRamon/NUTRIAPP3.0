@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
-import { useUser } from '../hooks/useUser'; // ← Importa tu hook de usuario
+import { useUser } from '../hooks/useUser';
 import { supabase } from '../lib/supabase';
 
 interface ProfileImageContextType {
@@ -14,35 +14,44 @@ interface ProfileImageProviderProps {
 }
 
 export const ProfileImageProvider: React.FC<ProfileImageProviderProps> = ({ children }) => {
-  const { user, loading } = useUser(); // ← Usa el hook para tener el usuario
-  const [profileImage, setProfileImage] = useState('usu.webp'); // Default
+  const { user, loading } = useUser();
+  const [profileImage, setProfileImage] = useState('usu.webp');
 
   useEffect(() => {
-    if (loading || !user) return;
+    // Salimos temprano si no hay nada útil
+    if (loading || !user?.foto_perfil) {
+      return;
+    }
 
-    // Si el usuario tiene foto_perfil guardada en BD
-    if (user.foto_perfil && user.foto_perfil !== 'default_avatar.png' && user.foto_perfil !== 'usu.webp') {
-      // Genera la URL pública directamente desde el path relativo
-      const { data } = supabase.storage
-        .from('perfiles')
-        .getPublicUrl(user.foto_perfil);
+    const fotoPath = user.foto_perfil.trim();
+
+    // Caso por defecto
+    if (!fotoPath || fotoPath === 'default_avatar.png' || fotoPath === 'usu.webp') {
+      setProfileImage(prev => prev === 'usu.webp' ? prev : 'usu.webp');
+      return;
+    }
+
+    // Generamos URL solo si es necesario (evitamos updates repetidos)
+    setProfileImage(prev => {
+      // Si ya tenemos una URL con este mismo path → no actualizamos
+      if (prev.includes(fotoPath) && prev.includes('supabase.co')) {
+        return prev; // ← Esto rompe el loop
+      }
+
+      const { data } = supabase.storage.from('perfiles').getPublicUrl(fotoPath);
 
       if (data?.publicUrl) {
-        // Agrega timestamp para evitar caché y forzar recarga
-        const urlWithCacheBuster = `${data.publicUrl}?t=${Date.now()}`;
-        setProfileImage(urlWithCacheBuster);
-        console.log('Foto de perfil cargada desde contexto:', urlWithCacheBuster);
-      } else {
-        console.warn('No se pudo generar URL pública para foto_perfil:', user.foto_perfil);
+        const url = `${data.publicUrl}?t=${Date.now()}`;
+        console.log('Foto cargada:', url);
+        return url;
       }
-    }
-  }, [user, loading]); // Se ejecuta cada vez que user o loading cambian
+
+      return prev; // No cambiamos si falla
+    });
+  }, [user?.foto_perfil, loading]); // ← Dependencia ESTABLE: solo el string de la foto + loading
 
   return (
-    <ProfileImageContext.Provider value={{
-      profileImage,
-      setProfileImage
-    }}>
+    <ProfileImageContext.Provider value={{ profileImage, setProfileImage }}>
       {children}
     </ProfileImageContext.Provider>
   );

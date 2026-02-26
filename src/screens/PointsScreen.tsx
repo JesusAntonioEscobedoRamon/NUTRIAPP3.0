@@ -1,14 +1,15 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { 
   View, Text, StyleSheet, Image, TouchableOpacity, Animated, 
-  Modal, ScrollView, Dimensions, Vibration, SafeAreaView, StatusBar 
+  Modal, ScrollView, Dimensions, Vibration, SafeAreaView, StatusBar,
+  Easing, RefreshControl
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-// Importamos tu contexto real
-import { usePoints } from '../context/PointsContext'; 
+import { useUser } from '../hooks/useUser';
+import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
-const CIRCLE_SIZE = width * 0.65;
 
 const COLORS = {
   primary: '#2E8B57',
@@ -30,25 +31,142 @@ const TROPHIES = [
   { id: 4, name: "Manzana de Diamante", pointsRequired: 10000, color: '#3498DB', level: "Leyenda", image: require('../../assets/premioplata.png') }
 ];
 
+// TTL ajustado a 10 segundos para reducir tiempo de carga inicial (caché más persistente pero fresco)
+const POINTS_CACHE_TTL = 10000;
+
 export default function PointsScreen({ navigation }: any) {
-  // USANDO TU CONTEXTO REAL
-  const { userPoints } = usePoints(); 
-  
+  const { user, refreshUserData, fetchUserPointsFast } = useUser();
+  const [userPoints, setUserPoints] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [showModal, setShowModal] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
+  // Loading animation values
+  const breatheValue = useRef(new Animated.Value(1)).current;
+  const textOpacityValue = useRef(new Animated.Value(0.3)).current;
+
+  // Loading animation
+  useEffect(() => {
+    if (loading) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(breatheValue, {
+            toValue: 1.1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(breatheValue, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(textOpacityValue, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(textOpacityValue, {
+            toValue: 0.3,
+            duration: 1500,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    }
+  }, [loading]);
+
+  // Carga de puntos con caché de 10 segundos para carga más rápida
+  const loadPoints = useCallback(async (forceFresh = false) => {
+    console.log("[PointsScreen] loadPoints iniciado (forceFresh:", forceFresh, ")");
+    try {
+      setErrorMsg(null);
+
+      let newPoints = 0;
+
+      // 1. Intentar caché (si no forzamos fresco)
+      if (!forceFresh) {
+        const cached = await AsyncStorage.getItem('points_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Date.now() - parsed.timestamp <= POINTS_CACHE_TTL) {
+            console.log("[PointsScreen] Usando caché fresco (<10s)");
+            newPoints = parsed.puntos_totales || 0;
+          } else {
+            console.log("[PointsScreen] Caché expirado (>10s) → fetch fresco");
+          }
+        }
+      }
+
+      // 2. Fetch fresco si necesario
+      const points = await fetchUserPointsFast();
+      newPoints = points.puntos_totales || 0;
+
+      // 3. Actualizar solo si cambió (evita re-renders innecesarios)
+      setUserPoints(prev => {
+        if (prev !== newPoints) {
+          console.log("[PointsScreen] Actualizando puntos:", prev, "→", newPoints);
+          return newPoints;
+        }
+        return prev;
+      });
+
+      // 4. Guardar en caché
+      await AsyncStorage.setItem('points_cache', JSON.stringify({
+        puntos_totales: newPoints,
+        timestamp: Date.now(),
+      }));
+    } catch (error) {
+      console.error("[PointsScreen] Error loading points:", error);
+      setErrorMsg("Error al cargar puntos. Intenta de nuevo.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      console.log("[PointsScreen] loadPoints finalizado");
+    }
+  }, [fetchUserPointsFast]);
+
+  // Carga inicial (solo al montar)
+  useEffect(() => {
+    console.log("[PointsScreen] Montaje inicial → carga puntos");
+    loadPoints();
+  }, [loadPoints]);
+
+  // Refresco suave al enfocar (sin setLoading(true), solo si no loading)
+  useFocusEffect(
+    useCallback(() => {
+      console.log("[PointsScreen] Focus: refrescando puntos");
+      if (!loading) {
+        loadPoints();
+      }
+    }, [loadPoints, loading])
+  );
+
+  // Pull-to-refresh (fuerza refresh fresco)
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadPoints(true); // forceFresh = true
+  };
+
   const state = useMemo(() => {
-    // Determinamos qué trofeos ha alcanzado el usuario basándonos en userPoints del contexto
     const list = TROPHIES.map(t => ({ ...t, achieved: userPoints >= t.pointsRequired }));
     const current = list[currentIdx];
     
-    // El mejor trofeo alcanzado para mostrar en el modal
     const best = [...list].reverse().find(t => t.achieved) || list[0];
     
-    // Lógica de progreso
     const prevPoints = currentIdx === 0 ? 0 : list[currentIdx - 1].pointsRequired;
     const diff = current.pointsRequired - prevPoints;
     const progress = Math.max(0, Math.min(1, (userPoints - prevPoints) / diff));
@@ -77,6 +195,66 @@ export default function PointsScreen({ navigation }: any) {
     }
   };
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.loadingContent}>
+          <Animated.View
+            style={[
+              styles.trophyContainer,
+              {
+                transform: [
+                  { scale: breatheValue }
+                ],
+              },
+            ]}
+          >
+            <MaterialCommunityIcons name="trophy" size={80} color={COLORS.primary} />
+          </Animated.View>
+          
+          <Animated.Text style={[styles.loadingText, { opacity: textOpacityValue }]}>
+            Cargando tus logros...
+          </Animated.Text>
+          
+          <View style={styles.dotsContainer}>
+            {[0, 1, 2].map((i) => (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.dot,
+                  {
+                    opacity: textOpacityValue.interpolate({
+                      inputRange: [0.3, 1],
+                      outputRange: [0.3, 1],
+                    }),
+                    transform: [{
+                      scale: textOpacityValue.interpolate({
+                        inputRange: [0.3, 1],
+                        outputRange: [0.8, 1.2],
+                      })
+                    }]
+                  },
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (errorMsg) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.errorText}>{errorMsg}</Text>
+        <TouchableOpacity onPress={loadPoints}>
+          <Text>Reintentar</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -94,7 +272,11 @@ export default function PointsScreen({ navigation }: any) {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />}
+      >
         
         {/* BARRA DE PROGRESO DE TROFEOS */}
         <View style={styles.trophyProgressSection}>
@@ -191,11 +373,6 @@ export default function PointsScreen({ navigation }: any) {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.rewardsButton} onPress={() => setShowModal(true)}>
-          <Ionicons name="medal" size={22} color={COLORS.white} />
-          <Text style={styles.rewardsButtonText}>VER TODOS MIS LOGROS</Text>
-        </TouchableOpacity>
-
       </ScrollView>
 
       <Modal visible={showModal} animationType="slide" transparent>
@@ -205,10 +382,8 @@ export default function PointsScreen({ navigation }: any) {
               <Ionicons name="close" size={28} color={COLORS.textDark} />
             </TouchableOpacity>
             
-            {/* Título */}
             <Text style={styles.modalMainTitle}>MIS LOGROS</Text>
             
-            {/* Mejor logro */}
             <View style={[styles.bestAchievementCard, { borderColor: state.best.color }]}>
               <View style={[styles.bestAchievementIcon, { backgroundColor: state.best.color }]}>
                 <Image source={state.best.image} style={styles.bestTrophyImg} />
@@ -221,7 +396,6 @@ export default function PointsScreen({ navigation }: any) {
               </View>
             </View>
 
-            {/* Todos los logros */}
             <View style={styles.allAchievementsSection}>
               <Text style={styles.allAchievementsTitle}>TODOS TUS LOGROS</Text>
               {state.list.map((trophy, idx) => (
@@ -262,8 +436,6 @@ const styles = StyleSheet.create({
   pointsBadgeHeader: { backgroundColor: COLORS.secondary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border },
   pointsBadgeText: { fontSize: 11, fontWeight: '900', color: COLORS.primary },
   scrollContent: { padding: 20, alignItems: 'center' },
-  
-  // TROPHY PROGRESS BAR
   trophyProgressSection: { width: '100%', marginBottom: 30 },
   trophyProgressTitle: { fontSize: 13, fontWeight: '900', color: COLORS.textLight, letterSpacing: 1.5, marginBottom: 15, textAlign: 'center' },
   trophyProgressContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
@@ -271,8 +443,6 @@ const styles = StyleSheet.create({
   trophyProgressIcon: { width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', marginBottom: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 3 },
   miniTrophyImg: { width: 40, height: 40, resizeMode: 'contain' },
   trophyProgressLabel: { fontSize: 10, fontWeight: '800', color: COLORS.primary },
-  
-  // INFO SECTION
   infoSection: { width: '100%', marginVertical: 20 },
   infoCard: { backgroundColor: COLORS.white, borderRadius: 16, padding: 16, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
@@ -296,13 +466,11 @@ const styles = StyleSheet.create({
   rewardsButton: { flexDirection: 'row', backgroundColor: COLORS.primary, paddingHorizontal: 30, paddingVertical: 18, borderRadius: 18, marginTop: 20, alignItems: 'center', width: '100%', justifyContent: 'center', marginBottom: 30, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
   rewardsButtonText: { color: COLORS.white, fontWeight: '900', marginLeft: 12, fontSize: 14, letterSpacing: 0.5 },
   
-  // MODAL
   modalOverlay: { flex: 1, backgroundColor: 'rgba(26, 48, 38, 0.9)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: COLORS.white, borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 20, paddingTop: 30, paddingBottom: 40, maxHeight: '90%' },
   closeBtn: { position: 'absolute', right: 20, top: 20, zIndex: 10 },
   modalMainTitle: { fontSize: 18, fontWeight: '900', color: COLORS.textDark, textAlign: 'center', marginBottom: 25, letterSpacing: 1 },
   
-  // BEST ACHIEVEMENT
   bestAchievementCard: { backgroundColor: COLORS.secondary, borderRadius: 20, padding: 20, alignItems: 'center', marginBottom: 25, borderLeftWidth: 5 },
   bestAchievementIcon: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', marginBottom: 15, elevation: 2 },
   bestTrophyImg: { width: 70, height: 70, resizeMode: 'contain' },
@@ -311,7 +479,6 @@ const styles = StyleSheet.create({
   bestAchievementBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: COLORS.white, borderRadius: 12 },
   bestAchievementStatus: { fontWeight: '900', fontSize: 11, marginLeft: 6, letterSpacing: 0.5 },
   
-  // ALL ACHIEVEMENTS
   allAchievementsSection: { marginBottom: 20 },
   allAchievementsTitle: { fontSize: 12, fontWeight: '900', color: COLORS.textLight, letterSpacing: 1, marginBottom: 12 },
   achievementRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
@@ -323,5 +490,44 @@ const styles = StyleSheet.create({
   achievementRowCheck: { paddingRight: 5 },
   
   modalCloseButton: { width: '100%', padding: 16, borderRadius: 18, alignItems: 'center', elevation: 2, marginTop: 10 },
-  modalCloseButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14, letterSpacing: 0.5 }
+  modalCloseButtonText: { color: COLORS.white, fontWeight: '900', fontSize: 14, letterSpacing: 0.5 },
+
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trophyContainer: {
+    width: 100,
+    height: 100,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.primary,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  dotsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.primary,
+  },
+
+  errorText: { color: 'red', textAlign: 'center', margin: 20 },
 });

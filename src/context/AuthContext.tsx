@@ -341,6 +341,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) {
         console.error('Error de Supabase Auth al resetear password:', error);
+
+        // Manejo específico del rate limit
+        if (error.message.includes('rate limit') || error.message.includes('exceeded')) {
+          return {
+            success: false,
+            error: 'Has excedido el límite temporal de solicitudes de recuperación. ' +
+                   'Por seguridad, espera entre 30 minutos y 1 hora antes de intentarlo nuevamente.' 
+          };
+        }
+
         return { 
           success: false, 
           error: 'Error al enviar enlace de recuperación.' 
