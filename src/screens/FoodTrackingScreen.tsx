@@ -64,16 +64,29 @@ const UI_TO_DB_MEAL_TYPE: Record<string, 'desayuno' | 'almuerzo' | 'comida' | 'c
   cena: 'cena',
   snack: 'snack',
   'colacion 1': 'snack',
-  'colacion 2': 'snack',
+  'colacion 2': 'comida',
 };
 
 const DB_TO_UI_MEALS = (dbMealType: string): string[] => {
   const key = normalizeMealType(dbMealType);
   if (key === 'desayuno') return ['Desayuno'];
-  if (key === 'almuerzo' || key === 'comida') return ['Almuerzo'];
+  if (key === 'almuerzo') return ['Almuerzo'];
+  if (key === 'comida') return ['Colación 2'];
   if (key === 'cena') return ['Cena'];
-  if (key === 'snack') return ['Colación 1', 'Colación 2'];
+  if (key === 'snack') return ['Colación 1'];
   return [];
+};
+
+const parseTimestampAsUTC = (value?: string | null): Date | null => {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw);
+  const normalized = hasTimezone ? raw : `${raw}Z`;
+  const parsed = new Date(normalized);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 export default function FoodTrackingScreen({ navigation }: any) {
@@ -109,13 +122,13 @@ export default function FoodTrackingScreen({ navigation }: any) {
 
   // Refrescar cuando la pantalla gana foco
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
+    const unsubscribe = navigation.addListener('focus', async () => {
       console.log('🔄 FoodTracking enfocada - refrescando');
-      refreshNutriologo();
-      loadData();
+      await refreshNutriologo();
+      await loadData();
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, refreshNutriologo, user?.id_paciente, estadoNutriologo, selectedDay]);
 
   // Detectar día actual
   useEffect(() => {
@@ -186,25 +199,41 @@ export default function FoodTrackingScreen({ navigation }: any) {
       const { data: foodData } = await foodService.getAvailableFoods();
       setFoods(foodData || []);
 
+      // Si no hay dieta activa/asignada, limpiar para evitar datos residuales
+      if (estadoNutriologo !== 'asignado_con_dieta') {
+        setTodayHistory([]);
+        setDietaRecomendada([]);
+        return;
+      }
+
       // Historial SOLO de hoy
       const today = new Date().toISOString().split('T')[0];
       const { data: historyData, error: histError } = await foodService.getFoodHistory(user.id_paciente, today, today);
       if (histError) throw histError;
 
-      const mapped = (historyData || []).map((item: any) => ({
+      const mapped = (historyData || []).map((item: any) => {
+        const rawPoints = item.puntos_obtenidos ?? item.alimentos?.puntos ?? item.alimentos?.puntos_obtenidos;
+        const numericPoints = Number(rawPoints);
+        const resolvedPoints = Number.isFinite(numericPoints) && numericPoints > 0 ? numericPoints : 3;
+
+        return {
         id: item.id_registro,
         food: {
           id: item.id_alimento || `custom-${item.id_registro}`,
           name: item.alimento_personalizado || (item.alimentos?.nombre || 'Personalizado'),
           unit: item.unidad || 'g',
           kcalPerUnit: item.alimentos?.calorias_por_100g ? item.alimentos.calorias_por_100g / 100 : 0,
-          pts: item.puntos_obtenidos || 0,
+          pts: resolvedPoints,
         },
         grams: item.cantidad,
         kcal: item.calorias_totales,
-        points: item.puntos_obtenidos || 0,
+        points: resolvedPoints,
+        assignedDate: item.fecha || today,
+        assignedTime: item.hora || null,
+        confirmedAt: item.created_at || null,
         mealType: item.tipo_comida?.trim(), // Guardamos tal cual viene (con acentos y mayúsculas)
-      }));
+        };
+      });
       setTodayHistory(mapped);
 
       // Marcar comidas registradas HOY usando etiquetas de UI
@@ -359,7 +388,8 @@ export default function FoodTrackingScreen({ navigation }: any) {
 
       // Mapear tipo de comida UI -> valores permitidos en BD (check constraint)
       const mealTypeRaw = String(selectedFood.type || '').trim();
-      const mealTypeNormalized = UI_TO_DB_MEAL_TYPE[normalizeMealType(mealTypeRaw)];
+      const normalizedMealKey = normalizeMealType(mealTypeRaw);
+      const mealTypeNormalized = UI_TO_DB_MEAL_TYPE[normalizedMealKey];
 
       if (!mealTypeNormalized) {
         Alert.alert('Error de validación', 'El tipo de comida no coincide con los permitidos.');
@@ -374,11 +404,23 @@ export default function FoodTrackingScreen({ navigation }: any) {
         cantidad: qty,
         unidad: selectedFood.unit || 'g',
         calorias_totales: kcalTotal,
+        puntos_obtenidos: pointsFinal,
         fecha: new Date().toISOString().split('T')[0],
         tipo_comida: mealTypeNormalized,
       };
 
-      const { error } = await foodService.registerFood(user.id_paciente, payload);
+      let { error } = await foodService.registerFood(user.id_paciente, payload);
+
+      if (error?.code === '23505') {
+        const fallbackPayload = {
+          ...payload,
+          id_alimento: null,
+          alimento_personalizado: `${selectedFood.platillo || selectedFood.name || 'Alimento'} (${mealTypeRaw})`,
+        };
+
+        const retry = await foodService.registerFood(user.id_paciente, fallbackPayload);
+        error = retry.error;
+      }
 
       if (error) {
         console.error('Error Supabase:', error);
@@ -512,6 +554,55 @@ export default function FoodTrackingScreen({ navigation }: any) {
   };
 
   const isToday = DAYS.indexOf(selectedDay) === todayDayIndex;
+  const hasAssignedDiet = estadoNutriologo === 'asignado_con_dieta';
+
+  const renderBlockedPlanState = () => {
+    const isUnassigned = estadoNutriologo === 'sin_asignar';
+
+    return (
+      <View style={styles.noDietContainer}>
+        <Ionicons
+          name={isUnassigned ? 'person-outline' : 'time-outline'}
+          size={60}
+          color={isUnassigned ? COLORS.primary : COLORS.warning}
+          style={styles.noDietIcon}
+        />
+        <Text style={[styles.noDietTitle, !isUnassigned && { color: COLORS.warning }]}>
+          {isUnassigned ? 'Sin Nutriólogo Asignado' : 'Esperando dieta'}
+        </Text>
+        <Text style={styles.noDietText}>
+          {isUnassigned
+            ? 'No tienes un nutriólogo asignado. Agenda una consulta para habilitar historial y progreso.'
+            : 'Tu nutriólogo aún no ha asignado tu plan, por eso no hay historial ni progreso disponible.'}
+        </Text>
+        {isUnassigned && (
+          <TouchableOpacity
+            style={styles.noDietButton}
+            onPress={() => navigation.navigate('Schedule', { view: 'agendar' })}
+          >
+            <Text style={styles.noDietButtonText}>Agendar consulta</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  const getHistoryMealVisual = (meal: string) => {
+    switch (meal) {
+      case 'Desayuno':
+        return { icon: 'sunny-outline', color: COLORS.warning };
+      case 'Colación 1':
+        return { icon: 'nutrition-outline', color: COLORS.accent };
+      case 'Almuerzo':
+        return { icon: 'restaurant-outline', color: COLORS.primary };
+      case 'Colación 2':
+        return { icon: 'cafe-outline', color: COLORS.info };
+      case 'Cena':
+        return { icon: 'moon-outline', color: COLORS.completed };
+      default:
+        return { icon: 'restaurant-outline', color: COLORS.primary };
+    }
+  };
 
   const renderContentByNutriologoState = () => {
     switch (estadoNutriologo) {
@@ -724,12 +815,15 @@ export default function FoodTrackingScreen({ navigation }: any) {
               contentContainerStyle={styles.daysBarContent}
             >
               {DAYS.map((day) => {
-                const { chip, text } = getDayStyle(day);
+                const { chip, text, isBlocked } = getDayStyle(day);
                 return (
                   <TouchableOpacity
                     key={day}
-                    onPress={() => handleDayChange(day)}
+                    onPress={() => {
+                      if (!isBlocked) handleDayChange(day);
+                    }}
                     style={chip}
+                    disabled={isBlocked}
                   >
                     <Text style={text}>
                       {day.substring(0, 3)}
@@ -777,35 +871,59 @@ export default function FoodTrackingScreen({ navigation }: any) {
               />
             }
           >
-            <Text style={styles.dayTitle}>Historial de Hoy</Text>
-            {todayHistory.length > 0 ? (
-              todayHistory.map((item) => (
-                <View key={item.id} style={styles.historyItem}>
-                  <View style={styles.historyContent}>
-                    <View style={styles.historyInfo}>
-                      <Text style={styles.historyFoodName}>{item.food.name}</Text>
-                      <Text style={styles.historyDetail}>
-                        {item.grams} {item.food.unit}
-                      </Text>
-                      <Text style={styles.historyNutrient}>
-                        {item.food.nutrient || item.food.categoria || 'General'}
-                      </Text>
-                    </View>
-                    <View style={styles.historyStats}>
-                      <View style={styles.historyStatItem}>
-                        <Text style={styles.historyKcal}>{Math.round(item.kcal)}</Text>
-                        <Text style={styles.historyStatLabel}>kcal</Text>
+            {!hasAssignedDiet ? (
+              renderBlockedPlanState()
+            ) : (
+              <>
+                <Text style={styles.dayTitle}>Historial de Hoy</Text>
+                {todayHistory.length > 0 ? (
+                  MEALS.map((meal) => {
+                    const mealItems = todayHistory.filter((item) => DB_TO_UI_MEALS(item.mealType).includes(meal));
+                    if (mealItems.length === 0) return null;
+
+                    const mealVisual = getHistoryMealVisual(meal);
+
+                    return (
+                      <View key={meal} style={styles.historyMealSection}>
+                        <View style={styles.historyMealHeader}>
+                          <View style={[styles.historyMealIconWrap, { borderColor: mealVisual.color }]}> 
+                            <Ionicons name={mealVisual.icon as any} size={14} color={mealVisual.color} />
+                          </View>
+                          <Text style={styles.historyMealTitle}>{meal.toUpperCase()}</Text>
+                        </View>
+
+                        {mealItems.map((item) => (
+                          <View key={item.id} style={[styles.historyItem, { borderLeftColor: mealVisual.color }]}> 
+                            <View style={styles.historyContent}>
+                              <View style={styles.historyInfo}>
+                                <Text style={styles.historyFoodName}>{item.food.name}</Text>
+                                <Text style={styles.historyDetail}>
+                                  {item.grams} {item.food.unit}
+                                </Text>
+                                <Text style={styles.historyNutrient}>
+                                  {item.food.nutrient || item.food.categoria || 'General'}
+                                </Text>
+                              </View>
+                              <View style={styles.historyStats}>
+                                <View style={styles.historyStatItem}>
+                                  <Text style={styles.historyKcal}>{Math.round(item.kcal)}</Text>
+                                  <Text style={styles.historyStatLabel}>kcal</Text>
+                                </View>
+                                <View style={styles.historyStatItem}>
+                                  <Text style={styles.historyPts}>+{item.points}</Text>
+                                  <Text style={styles.historyStatLabel}>pts</Text>
+                                </View>
+                              </View>
+                            </View>
+                          </View>
+                        ))}
                       </View>
-                      <View style={styles.historyStatItem}>
-                        <Text style={styles.historyPts}>+{item.points}</Text>
-                        <Text style={styles.historyStatLabel}>pts</Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              ))
+                    );
+                  })
             ) : (
               <Text style={styles.emptyText}>No hay alimentos registrados hoy.</Text>
+            )}
+              </>
             )}
           </ScrollView>
         </View>
@@ -827,7 +945,11 @@ export default function FoodTrackingScreen({ navigation }: any) {
               />
             }
           >
-            <Text style={styles.dayTitle}>Progreso del Día</Text>
+            {!hasAssignedDiet ? (
+              renderBlockedPlanState()
+            ) : (
+              <>
+                <Text style={styles.dayTitle}>Progreso del Día</Text>
 
             <View style={styles.progressSection}>
               <View style={styles.progressHeader}>
@@ -836,17 +958,30 @@ export default function FoodTrackingScreen({ navigation }: any) {
                   {Math.round(stats.totalKcal)} / {CALORIE_GOAL} kcal
                 </Text>
               </View>
-              <View style={styles.progressBar}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: `${Math.min(stats.kcalProgress, 100)}%`,
-                      backgroundColor: stats.kcalProgress > 100 ? '#FF6B6B' : COLORS.kcalBar,
-                    },
-                  ]}
-                />
+
+              <View style={styles.calorieCardsGrid}>
+                <View style={styles.calorieCard}>
+                  <Text style={styles.calorieCardLabel}>Consumidas</Text>
+                  <Text style={styles.calorieCardValue}>{Math.round(stats.totalKcal)}</Text>
+                </View>
+
+                <View style={styles.calorieCard}>
+                  <Text style={styles.calorieCardLabel}>
+                    {stats.remainingKcal > 0 ? 'Restantes' : 'Excedidas'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.calorieCardValue,
+                      stats.remainingKcal === 0 && { color: COLORS.warning },
+                    ]}
+                  >
+                    {stats.remainingKcal > 0
+                      ? Math.round(stats.remainingKcal)
+                      : Math.round(stats.totalKcal - CALORIE_GOAL)}
+                  </Text>
+                </View>
               </View>
+
               <View style={styles.progressFooter}>
                 <Text style={styles.progressInfo}>
                   {stats.remainingKcal > 0
@@ -864,17 +999,30 @@ export default function FoodTrackingScreen({ navigation }: any) {
                   {stats.totalPoints} / {POINTS_GOAL} pts
                 </Text>
               </View>
-              <View style={styles.progressBar}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: `${Math.min(stats.pointsProgress, 100)}%`,
-                      backgroundColor: stats.pointsProgress > 100 ? '#FFA500' : COLORS.ptsBar,
-                    },
-                  ]}
-                />
+
+              <View style={styles.pointsCardsGrid}>
+                <View style={styles.pointsCardSmall}>
+                  <Text style={styles.pointsCardLabel}>Ganados</Text>
+                  <Text style={styles.pointsCardValue}>{stats.totalPoints}</Text>
+                </View>
+
+                <View style={styles.pointsCardSmall}>
+                  <Text style={styles.pointsCardLabel}>
+                    {stats.pointsProgress <= 100 ? 'Restantes' : 'Extra'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.pointsCardValue,
+                      stats.pointsProgress > 100 && { color: COLORS.warning },
+                    ]}
+                  >
+                    {stats.pointsProgress <= 100
+                      ? Math.round(POINTS_GOAL - stats.totalPoints)
+                      : Math.round(stats.totalPoints - POINTS_GOAL)}
+                  </Text>
+                </View>
               </View>
+
               <View style={styles.progressFooter}>
                 <Text style={styles.progressInfo}>
                   {stats.pointsProgress <= 100
@@ -901,6 +1049,8 @@ export default function FoodTrackingScreen({ navigation }: any) {
                 </Text>
               </View>
             </View>
+              </>
+            )}
           </ScrollView>
         </View>
       )}
@@ -1142,11 +1292,35 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 12,
     marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.primary,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
+  },
+  historyMealSection: { marginBottom: 14 },
+  historyMealHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  historyMealIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+    marginRight: 8,
+  },
+  historyMealTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.primary,
+    letterSpacing: 0.8,
   },
   historyContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   historyInfo: { flex: 1 },
@@ -1198,6 +1372,60 @@ const styles = StyleSheet.create({
   progressFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   progressInfo: { fontSize: 11, color: COLORS.textLight, fontWeight: '600' },
   progressPercent: { fontSize: 12, fontWeight: '900', color: COLORS.primary },
+
+  calorieCardsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  calorieCard: {
+    flex: 1,
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  calorieCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textLight,
+    marginBottom: 4,
+  },
+  calorieCardValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.kcalBar,
+  },
+
+  pointsCardsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  pointsCardSmall: {
+    flex: 1,
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  pointsCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textLight,
+    marginBottom: 4,
+  },
+  pointsCardValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.ptsBar,
+  },
 
   summarySection: {
     backgroundColor: COLORS.white,

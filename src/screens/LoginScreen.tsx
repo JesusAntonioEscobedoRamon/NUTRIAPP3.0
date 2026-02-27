@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, Text, TextInput, StyleSheet, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
-  Modal, StatusBar, Dimensions, Animated, Easing
+  Modal, StatusBar, Dimensions, Animated, Easing, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
@@ -135,6 +135,7 @@ export default function LoginScreen({ navigation }: any) {
 
   const [birthDate, setBirthDate] = useState(new Date());
   const [showDateModal, setShowDateModal] = useState(false);
+  const [tempBirthDate, setTempBirthDate] = useState(new Date());
 
   const showAlert = (title: string, message: string) => {
     setModalVisible({ show: true, title, message });
@@ -157,28 +158,46 @@ export default function LoginScreen({ navigation }: any) {
     updateForm('celular', formatPhoneNumber(text));
   };
 
-  const handleDateSelect = () => setShowDateModal(true);
+  const applyBirthDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    updateForm('fecha_nacimiento', `${year}-${month}-${day}`);
+    setBirthDate(new Date(year, date.getMonth(), date.getDate()));
+  };
+
+  const handleDateSelect = () => {
+    if (Platform.OS === 'ios') {
+      setTempBirthDate(birthDate);
+    }
+    setShowDateModal(true);
+  };
 
   const handleDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'ios') {
+      if (selectedDate) {
+        setTempBirthDate(selectedDate);
+      }
+      return;
+    }
+
     setShowDateModal(false);
+    if (event?.type === 'dismissed') return;
     if (selectedDate) {
-      // CORRECCIÓN FINAL: Usamos directamente los valores locales del Date seleccionado
-      // Esto ignora por completo cualquier offset UTC/horario y guarda EXACTAMENTE el día que el usuario ve
-      const year = selectedDate.getFullYear();
-      const month = String(selectedDate.getMonth() + 1).padStart(2, '0'); // +1 porque getMonth es 0-11
-      const day = String(selectedDate.getDate()).padStart(2, '0');
+      const rawTimestamp = event?.nativeEvent?.timestamp;
+      const normalizedTimestamp =
+        typeof rawTimestamp === 'number' && Number.isFinite(rawTimestamp)
+          ? Math.abs(rawTimestamp) < 1e12
+            ? rawTimestamp * 1000
+            : rawTimestamp
+          : undefined;
 
-      const formattedDate = `${year}-${month}-${day}`;
+      const pickerDate =
+        normalizedTimestamp !== undefined ? new Date(normalizedTimestamp) : selectedDate;
 
-      // Guardamos la fecha formateada
-      updateForm('fecha_nacimiento', formattedDate);
-
-      // También actualizamos el estado birthDate con la fecha local (sin hora)
-      const localDate = new Date(year, selectedDate.getMonth(), selectedDate.getDate());
-      setBirthDate(localDate);
-
-      // Log para depurar (puedes quitarlo después)
-      console.log('Fecha seleccionada y guardada:', formattedDate);
+      const safeDate = Number.isNaN(pickerDate.getTime()) ? selectedDate : pickerDate;
+      applyBirthDate(safeDate);
     }
   };
 
@@ -444,15 +463,55 @@ export default function LoginScreen({ navigation }: any) {
         </View>
       </Modal>
 
-      {showDateModal && (
-        <DateTimePicker 
-          value={birthDate} 
-          mode="date" 
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'} 
-          onChange={handleDateChange} 
-          maximumDate={new Date()} 
-          locale="es-MX" 
-        />
+      {Platform.OS === 'ios' ? (
+        <Modal visible={showDateModal} transparent animationType="slide" onRequestClose={() => setShowDateModal(false)}>
+          <View style={styles.dateModalOverlay}>
+            <View style={styles.dateModalContent}>
+              <Text style={styles.dateModalTitle}>Selecciona tu fecha de nacimiento</Text>
+
+              <DateTimePicker
+                value={tempBirthDate}
+                mode="date"
+                display="spinner"
+                onChange={handleDateChange}
+                minimumDate={new Date(1899, 0, 1)}
+                maximumDate={new Date()}
+                locale="es-MX"
+              />
+
+              <View style={styles.dateModalActions}>
+                <TouchableOpacity
+                  style={[styles.dateActionBtn, styles.dateCancelBtn]}
+                  onPress={() => setShowDateModal(false)}
+                >
+                  <Text style={styles.dateCancelText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.dateActionBtn, styles.dateConfirmBtn]}
+                  onPress={() => {
+                    applyBirthDate(tempBirthDate);
+                    setShowDateModal(false);
+                  }}
+                >
+                  <Text style={styles.dateConfirmText}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : (
+        showDateModal && (
+          <DateTimePicker
+            value={birthDate}
+            mode="date"
+            display="default"
+            onChange={handleDateChange}
+            minimumDate={new Date(1899, 0, 1)}
+            maximumDate={new Date()}
+            locale="es-MX"
+          />
+        )
       )}
     </View>
   );
@@ -535,5 +594,53 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
   modalMessage: { fontSize: 14, color: COLORS.textLight, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
   modalBtn: { paddingHorizontal: 32, paddingVertical: 12, borderRadius: 8, minWidth: 140 },
-  modalBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 13, textAlign: 'center' }
+  modalBtnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 13, textAlign: 'center' },
+  dateModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  dateModalContent: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 24,
+  },
+  dateModalTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  dateModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    gap: 10,
+  },
+  dateActionBtn: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  dateCancelBtn: {
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  dateConfirmBtn: {
+    backgroundColor: COLORS.primary,
+  },
+  dateCancelText: {
+    color: COLORS.textLight,
+    fontWeight: '700',
+  },
+  dateConfirmText: {
+    color: COLORS.white,
+    fontWeight: '700',
+  },
 });

@@ -51,6 +51,7 @@ export default function CalendarScreen({ navigation, route }: any) {
   const currentDay = today.getDate();
   const currentMonthNum = today.getMonth();
   const currentYearNum = today.getFullYear();
+  const maxScheduleDate = new Date(currentYearNum + 1, currentMonthNum, currentDay);
 
   const currentMonth = {
     month: months[currentMonthIndex],
@@ -174,6 +175,12 @@ export default function CalendarScreen({ navigation, route }: any) {
   };
 
   const handleNextMonth = () => {
+    const nextMonthDate = new Date(currentYear, currentMonthIndex + 1, 1);
+    const maxMonthDate = new Date(maxScheduleDate.getFullYear(), maxScheduleDate.getMonth(), 1);
+    if (nextMonthDate > maxMonthDate) {
+      return;
+    }
+
     if (currentMonthIndex === 11) {
       setCurrentMonthIndex(0);
       setCurrentYear(currentYear + 1);
@@ -192,6 +199,12 @@ export default function CalendarScreen({ navigation, route }: any) {
   const handleDayPress = (day: number) => {
     const selectedFullDate = new Date(currentYear, currentMonthIndex, day);
     const todayDate = new Date(currentYearNum, currentMonthNum, currentDay);
+
+    if (selectedFullDate > maxScheduleDate) {
+      Alert.alert('Atención', 'Solo puedes agendar citas hasta 1 año a partir de hoy.');
+      return;
+    }
+
     if (selectedFullDate < todayDate) {
       Alert.alert('Atención', 'No puedes agendar citas en fechas pasadas.');
       return;
@@ -271,6 +284,11 @@ export default function CalendarScreen({ navigation, route }: any) {
       // Crear fecha local
       const fechaHoraLocal = new Date(currentYear, currentMonthIndex, parseInt(selectedDate!), hour24, minute);
 
+      if (fechaHoraLocal > maxScheduleDate) {
+        Alert.alert('Fecha fuera de rango', 'Solo puedes agendar citas hasta 1 año a partir de hoy.');
+        return;
+      }
+
       // Formato ISO manual
       const year = fechaHoraLocal.getFullYear();
       const month = String(fechaHoraLocal.getMonth() + 1).padStart(2, '0');
@@ -340,8 +358,16 @@ export default function CalendarScreen({ navigation, route }: any) {
               <Ionicons name="chevron-back" size={24} color={COLORS.primary} />
             </TouchableOpacity>
             <Text style={styles.monthTitle}>{currentMonth.month} {currentMonth.year}</Text>
-            <TouchableOpacity onPress={handleNextMonth} style={styles.navButton}>
-              <Ionicons name="chevron-forward" size={24} color={COLORS.primary} />
+            <TouchableOpacity
+              onPress={handleNextMonth}
+              style={styles.navButton}
+              disabled={new Date(currentYear, currentMonthIndex + 1, 1) > new Date(maxScheduleDate.getFullYear(), maxScheduleDate.getMonth(), 1)}
+            >
+              <Ionicons
+                name="chevron-forward"
+                size={24}
+                color={new Date(currentYear, currentMonthIndex + 1, 1) > new Date(maxScheduleDate.getFullYear(), maxScheduleDate.getMonth(), 1) ? COLORS.textLight : COLORS.primary}
+              />
             </TouchableOpacity>
           </View>
 
@@ -354,9 +380,11 @@ export default function CalendarScreen({ navigation, route }: any) {
           <View style={styles.calendarGrid}>
             {generateCalendarDays().map((item, index) => {
               const dayNum = item.day as number;
+              const dayDate = new Date(currentYear, currentMonthIndex, dayNum);
               const isPast = (currentYear < currentYearNum) || 
                             (currentYear === currentYearNum && currentMonthIndex < currentMonthNum) || 
                             (currentYear === currentYearNum && currentMonthIndex === currentMonthNum && dayNum < currentDay);
+              const isBeyondMaxDate = !item.empty && dayDate > maxScheduleDate;
               const isSundayDay = isSunday(dayNum);
               return (
                 <TouchableOpacity
@@ -367,10 +395,11 @@ export default function CalendarScreen({ navigation, route }: any) {
                     item.occupied && styles.occupiedDay,
                     !item.empty && selectedDate === item.day?.toString() && styles.selectedDay,
                     isPast && styles.pastDay,
+                    isBeyondMaxDate && styles.pastDay,
                     isSundayDay && styles.occupiedDay
                   ]}
-                  onPress={() => !item.empty && !item.occupied && !isPast && !isSundayDay && handleDayPress(dayNum)}
-                  disabled={item.empty || item.occupied || isPast || isSundayDay}
+                  onPress={() => !item.empty && !item.occupied && !isPast && !isBeyondMaxDate && !isSundayDay && handleDayPress(dayNum)}
+                  disabled={item.empty || item.occupied || isPast || isBeyondMaxDate || isSundayDay}
                 >
                   {!item.empty && (
                     <>
@@ -379,6 +408,7 @@ export default function CalendarScreen({ navigation, route }: any) {
                         item.occupied && styles.occupiedDayText,
                         selectedDate === item.day?.toString() && styles.selectedDayText,
                         isPast && styles.occupiedDayText,
+                        isBeyondMaxDate && styles.occupiedDayText,
                         isSundayDay && styles.occupiedDayText
                       ]}>
                         {item.day}

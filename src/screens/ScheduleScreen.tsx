@@ -84,6 +84,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
   const [pendingPaymentAppointments, setPendingPaymentAppointments] = useState<any[]>([]);
   const [paidPendingAppointments, setPaidPendingAppointments] = useState<any[]>([]);
   const [confirmedAppointments, setConfirmedAppointments] = useState<any[]>([]);
+  const [activeRelationSince, setActiveRelationSince] = useState<string | null>(null);
   const [appointmentsLoading, setAppointmentsLoading] = useState(true);
 
   const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
@@ -226,6 +227,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
     if (!patientData?.id_paciente) return;
 
     if (!nutriologo?.id_nutriologo) {
+      setActiveRelationSince(null);
       setPendingPaymentAppointments([]);
       setPaidPendingAppointments([]);
       setConfirmedAppointments([]);
@@ -235,6 +237,31 @@ export default function ScheduleScreen({ navigation, route }: any) {
 
     try {
       setAppointmentsLoading(true);
+
+      // Obtener fecha de asignación ACTIVA para mostrar solo citas del ciclo actual
+      const { data: relationData, error: relationError } = await supabase
+        .from('paciente_nutriologo')
+        .select('fecha_asignacion')
+        .eq('id_paciente', patientData.id_paciente)
+        .eq('id_nutriologo', nutriologo.id_nutriologo)
+        .eq('activo', true)
+        .order('fecha_asignacion', { ascending: false })
+        .limit(1);
+
+      if (relationError) {
+        throw relationError;
+      }
+
+      const relationStartDate = relationData?.[0]?.fecha_asignacion || null;
+      setActiveRelationSince(relationStartDate);
+
+      if (!relationStartDate) {
+        setPendingPaymentAppointments([]);
+        setPaidPendingAppointments([]);
+        setConfirmedAppointments([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('citas')
         .select(`
@@ -267,7 +294,9 @@ export default function ScheduleScreen({ navigation, route }: any) {
         return;
       }
 
-      const formatted = (data?.map(cita => {
+      const relationStartMs = new Date(relationStartDate).getTime();
+
+      const formatted = ((data || []).map(cita => {
         const nutri: any = Array.isArray(cita.nutriologos) ? cita.nutriologos[0] : cita.nutriologos;
         if (!nutri) return null;
 
@@ -312,6 +341,9 @@ export default function ScheduleScreen({ navigation, route }: any) {
           estado: estadoReal,
           estadoOriginal: cita.estado,
           id_nutriologo: nutri.id_nutriologo,
+          isCurrentCycle: Number.isFinite(new Date(cita.fecha_hora).getTime())
+            ? new Date(cita.fecha_hora).getTime() >= relationStartMs
+            : false,
           tienePago,
           pagoInfo: pagos.length > 0 ? pagos[0] : null,
         };
@@ -327,7 +359,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
       );
       
       const confirmed = formatted.filter((a: any) => 
-        a && (a.estado === 'confirmada' || a.estado === 'completada')
+        a && (a.estado === 'confirmada' || a.estado === 'completada') && a.isCurrentCycle
       );
 
       const confirmedForActiveNutriologo = nutriologo
@@ -339,6 +371,10 @@ export default function ScheduleScreen({ navigation, route }: any) {
       setConfirmedAppointments(confirmedForActiveNutriologo);
     } catch (err) {
       console.error('Excepción al cargar citas:', err);
+      setActiveRelationSince(null);
+      setPendingPaymentAppointments([]);
+      setPaidPendingAppointments([]);
+      setConfirmedAppointments([]);
     } finally {
       setAppointmentsLoading(false);
     }
@@ -356,11 +392,22 @@ export default function ScheduleScreen({ navigation, route }: any) {
 
   useEffect(() => {
     if (!nutriologo) {
+      setActiveRelationSince(null);
+      setPendingPaymentAppointments([]);
+      setPaidPendingAppointments([]);
       setConfirmedAppointments([]);
     }
   }, [nutriologo]);
 
   const handleSelectDoctor = async (doctor: any) => {
+    if (nutriologo && nutriologo.id_nutriologo !== doctor.realId) {
+      Alert.alert(
+        'Nutriólogo asignado',
+        `Actualmente tu nutriólogo de cabecera es Dr. ${nutriologo.nombre} ${nutriologo.apellido}. No puedes agendar con otro hasta desasignarte.`
+      );
+      return;
+    }
+
     // Verificar si ya es su nutriólogo de cabecera
     if (nutriologo && nutriologo.id_nutriologo === doctor.realId) {
       // Mostrar modal informativo
@@ -375,6 +422,42 @@ export default function ScheduleScreen({ navigation, route }: any) {
       doctorId: doctor.realId,
       precio: doctor.price,
     });
+  };
+
+  const clearConfirmedAppointments = async () => {
+    if (!patientData?.id_paciente || confirmedAppointments.length === 0) return;
+
+    Alert.alert(
+      'Limpiar confirmadas',
+      'Se ocultarán de esta vista tus citas confirmadas/atendidas actuales. ¿Deseas continuar?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Limpiar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const confirmedIds = confirmedAppointments.map((a: any) => a.id).filter(Boolean);
+              if (confirmedIds.length === 0) return;
+
+              const { error } = await supabase
+                .from('citas')
+                .update({ estado: 'cancelada' })
+                .in('id_cita', confirmedIds)
+                .eq('id_paciente', patientData.id_paciente);
+
+              if (error) throw error;
+
+              await fetchAppointments();
+              Alert.alert('Listo', 'Se limpiaron las citas confirmadas.');
+            } catch (err) {
+              console.error('Error limpiando confirmadas:', err);
+              Alert.alert('Error', 'No se pudieron limpiar las citas confirmadas.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handlePaymentFromPending = (appointment: any) => {
@@ -393,7 +476,15 @@ export default function ScheduleScreen({ navigation, route }: any) {
       return;
     }
 
-    if (!cardDetails?.complete || !cardName) {
+    const billingName = cardName.trim();
+
+    const isCardReady =
+      cardDetails?.complete ||
+      (cardDetails?.validNumber === 'Valid' &&
+        cardDetails?.validExpiryDate === 'Valid' &&
+        cardDetails?.validCVC === 'Valid');
+
+    if (!isCardReady || !billingName) {
       Alert.alert('Atención', 'Por favor completa todos los campos de pago.');
       return;
     }
@@ -422,15 +513,18 @@ export default function ScheduleScreen({ navigation, route }: any) {
 
       const { clientSecret } = JSON.parse(text);
 
-      const { paymentIntent, error } = await confirmPayment(clientSecret, {
-        paymentMethodType: 'Card',
-        paymentMethodData: {
-          billingDetails: {
-            name: cardName,
-            email: authUser?.email || 'no-email@nutriu.app',
+      const { paymentIntent, error } = await confirmPayment(
+        clientSecret,
+        {
+          paymentMethodType: 'Card',
+          paymentMethodData: {
+            billingDetails: {
+              name: billingName,
+              email: authUser?.email || 'no-email@nutriu.app',
+            },
           },
-        },
-      });
+        }
+      );
 
       if (error) throw new Error(error.message || 'Error al confirmar pago');
 
@@ -835,6 +929,14 @@ export default function ScheduleScreen({ navigation, route }: any) {
               <MaterialCommunityIcons name="calendar-check" size={24} color={COLORS.success} />
             </View>
 
+            {confirmedAppointments.length > 0 && (
+              <View style={styles.clearConfirmedRow}>
+                <TouchableOpacity style={styles.clearConfirmedButton} onPress={clearConfirmedAppointments}>
+                  <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
+                </TouchableOpacity>
+              </View>
+            )}
+
             {confirmedAppointments.length > 0 ? (
               <View style={styles.appointmentsList}>
                 {confirmedAppointments.map((appointment) => (
@@ -1104,7 +1206,7 @@ export default function ScheduleScreen({ navigation, route }: any) {
                   <TouchableOpacity 
                     style={paymentStyles.payButton}
                     onPress={handlePayment}
-                    disabled={isProcessing || !cardDetails?.complete || !cardName}
+                    disabled={isProcessing || !cardName.trim()}
                   >
                     {isProcessing ? (
                       <ActivityIndicator color={PAYMENT_COLORS.buttonText} size="small" />
@@ -1156,61 +1258,40 @@ export default function ScheduleScreen({ navigation, route }: any) {
         onRequestClose={() => setNutriologoInfoModal(false)}
       >
         <View style={detailsModalStyles.overlay}>
-          <View style={[detailsModalStyles.container, { width: '85%' }]}>
-            <View style={[detailsModalStyles.header, { backgroundColor: COLORS.success, paddingVertical: 15 }]}>
-              <View style={[detailsModalStyles.headerIcon, { width: 40, height: 40 }]}>
+          <View style={[detailsModalStyles.container, detailsModalStyles.assignedContainer]}>
+            <View style={[detailsModalStyles.header, detailsModalStyles.assignedHeader]}>
+              <View style={detailsModalStyles.headerIcon}>
                 <Ionicons name="checkmark-circle" size={24} color={COLORS.white} />
               </View>
-              <Text style={[detailsModalStyles.headerTitle, { fontSize: 18 }]}>Ya es tu nutriólogo</Text>
+              <Text style={detailsModalStyles.headerTitle}>Ya es tu nutriólogo</Text>
               <TouchableOpacity 
                 onPress={() => setNutriologoInfoModal(false)}
-                style={[detailsModalStyles.closeButton, { width: 35, height: 35 }]}
+                style={detailsModalStyles.closeButton}
               >
                 <Ionicons name="close" size={20} color={COLORS.textLight} />
               </TouchableOpacity>
             </View>
 
-            <View style={[detailsModalStyles.content, { padding: 20 }]}>
-              <View style={{ alignItems: 'center', marginBottom: 15 }}>
-                <View style={{ 
-                  width: 60, 
-                  height: 60, 
-                  borderRadius: 30, 
-                  backgroundColor: COLORS.success + '20',
-                  justifyContent: 'center', 
-                  alignItems: 'center',
-                  marginBottom: 10,
-                  borderWidth: 1,
-                  borderColor: COLORS.success,
-                }}>
+            <View style={detailsModalStyles.content}>
+              <View style={detailsModalStyles.assignedContent}> 
+                <View style={detailsModalStyles.assignedBadgeCircle}>
                   <Ionicons name="medical" size={30} color={COLORS.success} />
                 </View>
                 
-                <Text style={{ 
-                  fontSize: 16, 
-                  fontWeight: '700',
-                  color: COLORS.primary,
-                  textAlign: 'center',
-                  marginBottom: 5
-                }}>
+                <Text style={detailsModalStyles.assignedDoctorName}>
                   {selectedDoctor?.name || 'Este nutriólogo'}
                 </Text>
                 
-                <Text style={{ 
-                  fontSize: 14, 
-                  color: COLORS.textLight,
-                  textAlign: 'center',
-                  lineHeight: 20
-                }}>
+                <Text style={detailsModalStyles.assignedMessage}>
                   Ya es tu nutriólogo de cabecera. Puedes agendar otra consulta directamente.
                 </Text>
               </View>
 
               <TouchableOpacity 
-                style={[detailsModalStyles.closeButton2, { backgroundColor: COLORS.primary, padding: 12 }]}
+                style={detailsModalStyles.closeButton2}
                 onPress={() => setNutriologoInfoModal(false)}
               >
-                <Text style={[detailsModalStyles.closeButtonText, { fontSize: 14 }]}>ENTENDIDO</Text>
+                <Text style={detailsModalStyles.closeButtonText}>ENTENDIDO</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1307,6 +1388,17 @@ const styles = StyleSheet.create({
 
   appointmentsSection: { marginTop: 30, marginBottom: 20 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 },
+  clearConfirmedRow: { alignItems: 'flex-end', marginBottom: 12 },
+  clearConfirmedButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+    backgroundColor: COLORS.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionTitle: { fontSize: 20, fontWeight: '900', color: COLORS.textDark },
   appointmentsList: { gap: 12 },
   appointmentCard: { backgroundColor: COLORS.white, borderRadius: 20, padding: 16, borderWidth: 2, borderColor: COLORS.border, elevation: 2 },
@@ -1546,6 +1638,41 @@ const detailsModalStyles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 15,
     fontWeight: '900',
+  },
+  assignedContainer: {
+    width: '86%',
+    maxWidth: 380,
+  },
+  assignedHeader: {
+    backgroundColor: COLORS.success,
+  },
+  assignedContent: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  assignedBadgeCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.success,
+  },
+  assignedDoctorName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.primary,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  assignedMessage: {
+    fontSize: 14,
+    color: COLORS.textLight,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
 

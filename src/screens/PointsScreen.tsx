@@ -248,7 +248,7 @@ export default function PointsScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.container}>
         <Text style={styles.errorText}>{errorMsg}</Text>
-        <TouchableOpacity onPress={loadPoints}>
+        <TouchableOpacity onPress={() => loadPoints(true)}>
           <Text>Reintentar</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -355,20 +355,20 @@ export default function PointsScreen({ navigation }: any) {
 
         {/* INFORMACIÓN DE PROGRESO */}
         <View style={styles.infoSection}>
-          <View style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>PUNTOS ACTUALES</Text>
-              <Text style={styles.infoValue}>{userPoints}</Text>
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>PUNTOS</Text>
+              <Text style={styles.metricValue}>{userPoints}</Text>
             </View>
-            <View style={styles.infoDivider} />
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>PRÓXIMO OBJETIVO</Text>
-              <Text style={styles.infoValue}>{state.current.pointsRequired}</Text>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>OBJETIVO</Text>
+              <Text style={styles.metricValue}>{state.current.pointsRequired}</Text>
             </View>
-            <View style={styles.infoDivider} />
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>AVANCE</Text>
-              <Text style={[styles.infoValue, { color: state.current.color }]}>{state.percentage}%</Text>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>AVANCE</Text>
+              <Text style={[styles.metricValue, { color: state.current.color }]}>{state.percentage}%</Text>
             </View>
           </View>
         </View>
@@ -428,30 +428,109 @@ export default function PointsScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.secondary },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 50, paddingBottom: 20, paddingHorizontal: 20, backgroundColor: COLORS.white, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  headerIcon: { padding: 5 },
-  brandContainer: { alignItems: 'center' },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    position: 'relative',
+    paddingTop: 50,
+    paddingBottom: 18,
+    paddingHorizontal: 20,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  headerIcon: { padding: 5, zIndex: 2 },
+  brandContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+    pointerEvents: 'none',
+  },
   brandName: { fontSize: 18, fontWeight: '900', color: COLORS.primary, letterSpacing: 1.5 },
   underlineSmall: { width: 20, height: 3, backgroundColor: COLORS.accent, borderRadius: 2, marginTop: 2 },
-  pointsBadgeHeader: { backgroundColor: COLORS.secondary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border },
+  pointsBadgeHeader: {
+    backgroundColor: COLORS.secondary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    zIndex: 2,
+  },
   pointsBadgeText: { fontSize: 11, fontWeight: '900', color: COLORS.primary },
-  scrollContent: { padding: 20, alignItems: 'center' },
-  trophyProgressSection: { width: '100%', marginBottom: 30 },
+  scrollContent: { padding: 20, paddingTop: 24, alignItems: 'center' },
+  trophyProgressSection: {
+    width: '100%',
+    marginBottom: 24,
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+  },
   trophyProgressTitle: { fontSize: 13, fontWeight: '900', color: COLORS.textLight, letterSpacing: 1.5, marginBottom: 15, textAlign: 'center' },
   trophyProgressContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   trophyProgressItem: { alignItems: 'center', flex: 1 },
-  trophyProgressIcon: { width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', marginBottom: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 3 },
+  trophyProgressIcon: { width: 58, height: 58, borderRadius: 29, justifyContent: 'center', alignItems: 'center', marginBottom: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 3 },
   miniTrophyImg: { width: 40, height: 40, resizeMode: 'contain' },
-  trophyProgressLabel: { fontSize: 10, fontWeight: '800', color: COLORS.primary },
-  infoSection: { width: '100%', marginVertical: 20 },
-  infoCard: { backgroundColor: COLORS.white, borderRadius: 16, padding: 16, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
-  infoLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textLight, letterSpacing: 0.5 },
-  infoValue: { fontSize: 16, fontWeight: '900', color: COLORS.primary },
-  infoDivider: { height: 1, backgroundColor: COLORS.border },
-  carouselContainer: { flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-between', marginVertical: 20 },
-  trophyCard: { width: width * 0.7, backgroundColor: COLORS.white, borderRadius: 25, padding: 25, alignItems: 'center', borderWidth: 2, borderColor: COLORS.border, elevation: 3 },
-  imageBox: { width: 140, height: 140, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
+  trophyProgressLabel: { fontSize: 10, fontWeight: '800', color: COLORS.primary, marginTop: 2 },
+  infoSection: { width: '100%', marginTop: 6, marginBottom: 18 },
+  metricsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+  },
+  metricLabel: { fontSize: 10, fontWeight: '800', color: COLORS.textLight, letterSpacing: 0.6, marginBottom: 5 },
+  metricValue: { fontSize: 18, fontWeight: '900', color: COLORS.primary },
+  carouselContainer: { flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-between', marginVertical: 16 },
+  trophyCard: {
+    width: width * 0.72,
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+  },
+  imageBox: {
+    width: 146,
+    height: 146,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderRadius: 73,
+    backgroundColor: COLORS.secondary,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
   trophyImg: { width: '100%', height: '100%', resizeMode: 'contain' },
   lockContainer: { position: 'absolute', alignItems: 'center' },
   lockCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
